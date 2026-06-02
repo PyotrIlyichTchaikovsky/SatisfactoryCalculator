@@ -8,6 +8,12 @@
 
 ## Usage
 
+Install Python dependencies:
+
+```powershell
+py -m pip install -r requirements.txt
+```
+
 Generate or refresh the Excel workbook:
 
 ```powershell

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import re
+import sys
 import zipfile
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any
 from xml.etree import ElementTree as ET
+
+try:
+    from scipy.optimize import linprog
+except ImportError:  # pragma: no cover - handled at runtime with a clear planner error.
+    linprog = None
 
 
 DEFAULT_EXCEL_PATH = Path(__file__).resolve().parent.parent / "raw_data" / "Satisfactory_Recipes_Wide.xlsx"
@@ -16,6 +23,8 @@ _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}
 _PACKAGE_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _COLUMN_RE = re.compile(r"[A-Z]+")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_LP_EPS = 1e-7
+_RESULT_EPS = 1e-5
 
 
 class PlannerError(ValueError):
@@ -80,6 +89,16 @@ class ProductionPlanner:
         self.recipes = recipes
         self.version_info = version_info
         self.recipes_by_output = self._build_recipes_by_output(recipes)
+        self.output_classes = {
+            output.item_class
+            for recipe in recipes
+            for output in recipe.outputs
+        }
+        self.raw_source_classes = {
+            item.class_name
+            for item in items.values()
+            if item.is_raw_resource or item.class_name not in self.output_classes
+        }
         self.items_list = sorted(
             items.values(),
             key=lambda item: (not item.producible, item.name.lower(), item.class_name),
@@ -118,34 +137,48 @@ class ProductionPlanner:
     def list_items(self) -> list[dict[str, Any]]:
         return [self._item_to_dict(item) for item in self.items_list]
 
-    def plan(self, targets: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    def plan(
+        self,
+        targets: Iterable[dict[str, Any]],
+        disabled_recipe_ids: Iterable[Any] | None = None,
+    ) -> dict[str, Any]:
         parsed_targets = self._parse_targets(targets)
-        roots = [
-            self._build_tree(target["item"].class_name, target["rate"], [], f"root-{index}")
-            for index, target in enumerate(parsed_targets)
-        ]
-        totals: dict[str, dict[str, Any]] = {}
-        for root in roots:
-            self._collect_totals(root, totals, is_root=True)
-
-        total_rows = sorted(
-            totals.values(),
-            key=lambda row: (row["raw"], row["item"]["name"].lower(), row["item"]["className"]),
-        )
-        for row in total_rows:
-            row["recipes"] = sorted(row["recipes"])
+        disabled_ids = self._parse_disabled_recipe_ids(disabled_recipe_ids)
+        solution = self._solve_linear_plan(parsed_targets, disabled_ids)
 
         return {
             "targets": [
                 {"item": self._item_to_dict(target["item"]), "rate": target["rate"]}
                 for target in parsed_targets
             ],
-            "roots": roots,
-            "totals": total_rows,
+            "disabledRecipeIds": sorted(disabled_ids),
+            "roots": solution["layers"],
+            "layers": solution["layers"],
+            "recipeRuns": solution["recipeRuns"],
+            "materialBalances": solution["materialBalances"],
+            "rawTotals": solution["rawTotals"],
+            "totals": solution["totals"],
             "summary": {
                 "targetCount": len(parsed_targets),
-                "totalRows": len(total_rows),
+                "recipeRunCount": len(solution["recipeRuns"]),
+                "totalRows": len(solution["totals"]),
+                "objectiveValue": solution["objectiveValue"],
+                "secondaryObjectiveValue": solution["secondaryObjectiveValue"],
+                "disabledRecipeCount": len(disabled_ids),
             },
+        }
+
+    def _parse_disabled_recipe_ids(self, disabled_recipe_ids: Iterable[Any] | None) -> set[str]:
+        if disabled_recipe_ids is None:
+            return set()
+        if isinstance(disabled_recipe_ids, (str, bytes)) or not isinstance(disabled_recipe_ids, Iterable):
+            raise PlannerError("disabledRecipeIds must be an array.")
+        valid_ids = {recipe.recipe_id for recipe in self.recipes}
+        return {
+            recipe_id
+            for value in disabled_recipe_ids
+            for recipe_id in [str(value or "").strip()]
+            if recipe_id and recipe_id in valid_ids
         }
 
     def _parse_targets(self, targets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -179,77 +212,319 @@ class ProductionPlanner:
                 return item
         raise PlannerError(f"Unknown item: {text}")
 
-    def _build_tree(self, item_class: str, rate: float, path: list[str], node_key: str) -> dict[str, Any]:
-        item = self._item_for_class(item_class)
-        node: dict[str, Any] = {
-            "key": node_key,
-            "item": self._item_to_dict(item),
-            "rate": _clean_number(rate),
-            "children": [],
-            "recipe": None,
-            "choiceCount": 0,
-            "raw": False,
-            "cycle": False,
+    def _solve_linear_plan(
+        self,
+        parsed_targets: list[dict[str, Any]],
+        disabled_recipe_ids: set[str],
+    ) -> dict[str, Any]:
+        if linprog is None:
+            raise PlannerError(
+                "scipy is required for linear planning. "
+                f"Current Python: {sys.executable}. "
+                "Run `py -m pip install -r requirements.txt` in satisfactory_calculator, then restart the server."
+            )
+
+        candidate_recipes = tuple(
+            recipe for recipe in self.recipes if recipe.recipe_id not in disabled_recipe_ids
+        )
+        material_classes = self._plan_material_classes(parsed_targets, candidate_recipes)
+        raw_classes = sorted(self.raw_source_classes & set(material_classes))
+        raw_index = {item_class: index for index, item_class in enumerate(raw_classes)}
+        material_index = {item_class: index for index, item_class in enumerate(material_classes)}
+
+        recipe_count = len(candidate_recipes)
+        variable_count = recipe_count + len(raw_classes)
+        net_matrix = [[0.0 for _ in range(variable_count)] for _ in material_classes]
+        demand = [0.0 for _ in material_classes]
+
+        for target in parsed_targets:
+            demand[material_index[target["item"].class_name]] += target["rate"]
+
+        for recipe_index, recipe in enumerate(candidate_recipes):
+            for output in recipe.outputs:
+                row_index = material_index.get(output.item_class)
+                if row_index is not None:
+                    net_matrix[row_index][recipe_index] += output.per_min
+            for input_item in recipe.inputs:
+                row_index = material_index.get(input_item.item_class)
+                if row_index is not None:
+                    net_matrix[row_index][recipe_index] -= input_item.per_min
+
+        for item_class, index in raw_index.items():
+            net_matrix[material_index[item_class]][recipe_count + index] = 1.0
+
+        raw_costs = [0.0 for _ in range(recipe_count)] + [
+            self._raw_source_weight(item_class)
+            for item_class in raw_classes
+        ]
+        a_ub = [[-value for value in row] for row in net_matrix]
+        b_ub = [-value for value in demand]
+        bounds = [(0.0, None) for _ in range(variable_count)]
+
+        first = linprog(raw_costs, A_ub=a_ub, b_ub=b_ub, bounds=bounds, method="highs")
+        if not first.success:
+            raise PlannerError(f"No feasible production plan found: {first.message}")
+
+        raw_minimum = float(first.fun)
+        tolerance = max(_LP_EPS, abs(raw_minimum) * 1e-7)
+        second_stage_a_ub = [*a_ub, raw_costs]
+        second_stage_b_ub = [*b_ub, raw_minimum + tolerance]
+        secondary_costs = [1.0 for _ in range(recipe_count)] + [0.0 for _ in raw_classes]
+        second = linprog(
+            secondary_costs,
+            A_ub=second_stage_a_ub,
+            b_ub=second_stage_b_ub,
+            bounds=bounds,
+            method="highs",
+        )
+        result = second if second.success else first
+        values = [float(value) for value in result.x]
+
+        recipe_runs = self._build_recipe_runs(candidate_recipes, values[:recipe_count])
+        raw_supplies = {
+            item_class: values[recipe_count + index]
+            for item_class, index in raw_index.items()
+            if values[recipe_count + index] > _RESULT_EPS
+        }
+        material_balances = self._build_material_balances(material_classes, parsed_targets, recipe_runs, raw_supplies)
+        layers = self._build_plan_layers(parsed_targets, recipe_runs, raw_supplies)
+        totals = self._build_total_rows(material_balances)
+        raw_totals = [
+            {
+                "item": self._item_to_dict(self._item_for_class(item_class)),
+                "rate": _clean_number(rate),
+            }
+            for item_class, rate in sorted(
+                raw_supplies.items(),
+                key=lambda entry: (self._item_for_class(entry[0]).name.lower(), entry[0]),
+            )
+        ]
+
+        return {
+            "recipeRuns": recipe_runs,
+            "materialBalances": material_balances,
+            "rawTotals": raw_totals,
+            "layers": layers,
+            "totals": totals,
+            "objectiveValue": _clean_number(raw_minimum),
+            "secondaryObjectiveValue": _clean_number(float(result.fun)),
         }
 
-        if item_class in path:
-            node["cycle"] = True
-            return node
+    def _plan_material_classes(
+        self,
+        parsed_targets: list[dict[str, Any]],
+        recipes: tuple[Recipe, ...],
+    ) -> list[str]:
+        classes = {
+            item_class
+            for recipe in recipes
+            for ingredient in (*recipe.inputs, *recipe.outputs)
+            for item_class in [ingredient.item_class]
+        }
+        classes.update(target["item"].class_name for target in parsed_targets)
+        return sorted(classes)
 
-        if item.is_raw_resource:
-            node["raw"] = True
-            return node
-
-        choices = self.recipes_by_output.get(item_class, [])
-        node["choiceCount"] = len(choices)
-        if not choices:
-            node["raw"] = True
-            return node
-
-        choice = choices[0]
-        output_rate = choice.output.per_min
-        if output_rate <= 0:
-            node["raw"] = True
-            return node
-
-        scale = rate / output_rate
-        node["recipe"] = self._recipe_to_dict(choice.recipe)
-        next_path = [*path, item_class]
-        node["children"] = [
-            self._build_tree(
-                input_item.item_class,
-                input_item.per_min * scale,
-                next_path,
-                f"{node_key}.{index}-{input_item.item_class}",
-            )
-            for index, input_item in enumerate(choice.recipe.inputs)
-        ]
-        return node
-
-    def _collect_totals(self, node: dict[str, Any], totals: dict[str, dict[str, Any]], is_root: bool) -> None:
-        if not is_root:
-            item_class = node["item"]["className"]
-            current = totals.get(item_class)
-            if current is None:
-                item = self._item_for_class(item_class)
-                current = {
-                    "item": self._item_to_dict(item),
-                    "rate": 0.0,
-                    "raw": self._is_terminal_raw(item),
-                    "recipes": set(),
+    def _build_recipe_runs(self, recipes: tuple[Recipe, ...], recipe_scales: list[float]) -> list[dict[str, Any]]:
+        runs: list[dict[str, Any]] = []
+        for recipe, scale in zip(recipes, recipe_scales):
+            if scale <= _RESULT_EPS:
+                continue
+            runs.append(
+                {
+                    "id": recipe.recipe_id,
+                    "recipe": self._recipe_to_dict(recipe),
+                    "scale": _clean_number(scale),
+                    "inputs": [
+                        self._scaled_ingredient_to_dict(input_item, scale, "input")
+                        for input_item in recipe.inputs
+                    ],
+                    "outputs": [
+                        self._scaled_ingredient_to_dict(output, scale, "output", index, len(recipe.outputs))
+                        for index, output in enumerate(recipe.outputs)
+                    ],
                 }
-                totals[item_class] = current
-            current["rate"] += float(node["rate"])
-            current["rate"] = _clean_number(current["rate"])
-            current["raw"] = bool(current["raw"] or node["raw"])
-            if node.get("recipe"):
-                current["recipes"].add(node["recipe"]["name"])
+            )
+        runs.sort(key=lambda run: (run["recipe"]["name"].lower(), run["recipe"]["id"]))
+        return runs
 
-        for child in node["children"]:
-            self._collect_totals(child, totals, is_root=False)
+    def _build_material_balances(
+        self,
+        material_classes: list[str],
+        parsed_targets: list[dict[str, Any]],
+        recipe_runs: list[dict[str, Any]],
+        raw_supplies: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        balances: dict[str, dict[str, Any]] = {}
+        for item_class in material_classes:
+            item = self._item_for_class(item_class)
+            balances[item_class] = {
+                "item": self._item_to_dict(item),
+                "produced": 0.0,
+                "consumed": 0.0,
+                "external": raw_supplies.get(item_class, 0.0),
+                "targetDemand": 0.0,
+                "surplus": 0.0,
+                "raw": self._is_terminal_raw(item),
+                "producers": set(),
+                "consumers": set(),
+            }
+
+        for target in parsed_targets:
+            balances[target["item"].class_name]["targetDemand"] += target["rate"]
+
+        for run in recipe_runs:
+            recipe_name = run["recipe"]["name"]
+            for output in run["outputs"]:
+                balance = balances[output["item"]["className"]]
+                balance["produced"] += float(output["rate"])
+                balance["producers"].add(recipe_name)
+            for input_item in run["inputs"]:
+                balance = balances[input_item["item"]["className"]]
+                balance["consumed"] += float(input_item["rate"])
+                balance["consumers"].add(recipe_name)
+
+        result: list[dict[str, Any]] = []
+        for balance in balances.values():
+            balance["surplus"] = (
+                balance["produced"]
+                + balance["external"]
+                - balance["consumed"]
+                - balance["targetDemand"]
+            )
+            produced = _clean_number(balance["produced"])
+            consumed = _clean_number(balance["consumed"])
+            external = _clean_number(balance["external"])
+            target_demand = _clean_number(balance["targetDemand"])
+            surplus = _clean_number(balance["surplus"])
+            if not any(abs(float(value)) > _RESULT_EPS for value in [produced, consumed, external, target_demand, surplus]):
+                continue
+            result.append(
+                {
+                    "item": balance["item"],
+                    "produced": produced,
+                    "consumed": consumed,
+                    "external": external,
+                    "targetDemand": target_demand,
+                    "surplus": surplus,
+                    "raw": balance["raw"],
+                    "producers": sorted(balance["producers"]),
+                    "consumers": sorted(balance["consumers"]),
+                }
+            )
+
+        result.sort(key=lambda row: (row["raw"], row["item"]["name"].lower(), row["item"]["className"]))
+        return result
+
+    def _build_plan_layers(
+        self,
+        parsed_targets: list[dict[str, Any]],
+        recipe_runs: list[dict[str, Any]],
+        raw_supplies: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        layers: list[dict[str, Any]] = []
+        remaining = {run["id"]: run for run in recipe_runs}
+        demanded = {target["item"].class_name for target in parsed_targets}
+        layer_index = 0
+
+        while remaining and demanded:
+            selected_ids = [
+                run_id
+                for run_id, run in remaining.items()
+                if any(output["item"]["className"] in demanded for output in run["outputs"])
+            ]
+            if not selected_ids:
+                break
+
+            selected = [remaining.pop(run_id) for run_id in selected_ids]
+            selected.sort(key=lambda run: (run["recipe"]["name"].lower(), run["recipe"]["id"]))
+            layers.append(
+                {
+                    "title": "目标产出" if layer_index == 0 else f"补给层 {layer_index}",
+                    "kind": "recipes",
+                    "recipeRuns": selected,
+                }
+            )
+            demanded = {
+                input_item["item"]["className"]
+                for run in selected
+                for input_item in run["inputs"]
+                if input_item["item"]["className"] not in self.raw_source_classes
+            }
+            layer_index += 1
+
+        if remaining:
+            shared_runs = sorted(
+                remaining.values(),
+                key=lambda run: (run["recipe"]["name"].lower(), run["recipe"]["id"]),
+            )
+            layers.append(
+                {
+                    "title": "共享 / 闭环补给",
+                    "kind": "recipes",
+                    "recipeRuns": shared_runs,
+                }
+            )
+
+        if raw_supplies:
+            layers.append(
+                {
+                    "title": "外部原材料输入",
+                    "kind": "raw",
+                    "rawItems": [
+                        {
+                            "item": self._item_to_dict(self._item_for_class(item_class)),
+                            "rate": _clean_number(rate),
+                        }
+                        for item_class, rate in sorted(
+                            raw_supplies.items(),
+                            key=lambda entry: (self._item_for_class(entry[0]).name.lower(), entry[0]),
+                        )
+                    ],
+                }
+            )
+
+        return layers
+
+    def _build_total_rows(self, material_balances: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for balance in material_balances:
+            demand_rate = float(balance["consumed"]) + float(balance["targetDemand"])
+            if demand_rate <= _RESULT_EPS:
+                continue
+            rows.append(
+                {
+                    "item": balance["item"],
+                    "rate": _clean_number(demand_rate),
+                    "raw": balance["raw"],
+                    "recipes": balance["producers"],
+                }
+            )
+        rows.sort(key=lambda row: (row["raw"], row["item"]["name"].lower(), row["item"]["className"]))
+        return rows
+
+    def _scaled_ingredient_to_dict(
+        self,
+        ingredient: Ingredient,
+        scale: float,
+        direction: str,
+        output_index: int = 0,
+        output_count: int = 1,
+    ) -> dict[str, Any]:
+        role = direction
+        if direction == "output":
+            role = "byproduct" if output_count > 1 and output_index > 0 else "output"
+        return {
+            "item": self._item_to_dict(self._item_for_class(ingredient.item_class)),
+            "rate": _clean_number(ingredient.per_min * scale),
+            "unit": ingredient.unit,
+            "role": role,
+        }
+
+    def _raw_source_weight(self, item_class: str) -> float:
+        return 1.0
 
     def _is_terminal_raw(self, item: Item) -> bool:
-        return item.is_raw_resource or not self.recipes_by_output.get(item.class_name)
+        return item.class_name in self.raw_source_classes
 
     def _item_for_class(self, item_class: str) -> Item:
         return self.items.get(

@@ -104,6 +104,99 @@ select {
   gap: 12px;
 }
 
+.disabled-recipes-dropdown {
+  position: relative;
+}
+
+.disabled-recipes-dropdown summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.disabled-recipes-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.disabled-recipes-dropdown summary::after {
+  content: "▾";
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.disabled-recipes-dropdown[open] summary {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.disabled-recipes-dropdown.empty summary {
+  color: var(--muted);
+}
+
+.disabled-recipe-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(360px, calc(100vw - 36px));
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(18, 32, 46, 0.18);
+}
+
+.disabled-recipe-empty,
+.disabled-recipe-row {
+  padding: 10px 12px;
+}
+
+.disabled-recipe-empty {
+  color: var(--muted);
+}
+
+.disabled-recipe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.disabled-recipe-row:last-child {
+  border-bottom: 0;
+}
+
+.disabled-recipe-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.restore-recipe-button {
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--accent-dark);
+  cursor: pointer;
+}
+
+.restore-recipe-button:hover {
+  background: var(--accent-soft);
+}
+
 h2 {
   margin: 0;
   font-size: 17px;
@@ -332,68 +425,158 @@ h2 {
   display: none;
 }
 
-.tree-list {
-  margin: 0;
-  padding-left: 0;
-  list-style: none;
+.graph-viewport {
+  overflow: auto;
+  min-height: 560px;
+  border: 1px solid #1d2a34;
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(48, 80, 96, 0.32), transparent 34%),
+    linear-gradient(180deg, #232a30 0%, #1e252b 100%);
 }
 
-.tree-list .tree-list {
-  margin-top: 8px;
-  padding-left: 22px;
-  border-left: 2px solid #d9e2e7;
+.graph-canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 560px;
 }
 
-.tree-node {
-  margin: 8px 0;
+.graph-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: visible;
 }
 
-.tree-card {
+.graph-flow {
+  fill: none;
+  stroke-linecap: butt;
+  stroke-opacity: 0.46;
+  mix-blend-mode: screen;
+}
+
+.graph-flow.feedback {
+  stroke-dasharray: 10 7;
+  stroke-opacity: 0.36;
+}
+
+.graph-edge-label {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(35, 42, 48, 0.78);
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.15;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.graph-node {
+  position: absolute;
+  z-index: 5;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: start;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
+  grid-template-rows: auto minmax(32px, auto) auto;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 2px solid #2e8dcc;
+  border-radius: 2px;
+  background: rgba(21, 89, 130, 0.92);
+  color: #e8f3fb;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
 }
 
-.tree-card.raw {
-  border-color: #d4c585;
-  background: #fffbea;
+.graph-node.has-disable-button .graph-node-kind,
+.graph-node.has-disable-button .graph-node-title {
+  padding-right: 28px;
 }
 
-.tree-card.cycle {
-  border-color: #f0b6a8;
-  background: #fff7ed;
+.disable-recipe-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  background: rgba(30, 20, 42, 0.45);
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
 }
 
-.node-main {
-  min-width: 0;
+.disable-recipe-button:hover {
+  border-color: #ffffff;
+  background: rgba(127, 29, 29, 0.92);
 }
 
-.node-title {
+.graph-node.recipe {
+  border-color: #2fa84f;
+  background: rgba(28, 110, 39, 0.92);
+}
+
+.graph-node.recipe.alternate {
+  border-color: #8a5ec2;
+  background: rgba(91, 57, 126, 0.92);
+}
+
+.graph-node.raw {
+  border-color: #277ec0;
+  background: rgba(20, 87, 130, 0.92);
+}
+
+.graph-node.target {
+  border-color: #935847;
+  background: rgba(98, 58, 47, 0.96);
+}
+
+.graph-node.surplus {
+  border-color: #8a5ec2;
+  background: rgba(84, 55, 119, 0.94);
+}
+
+.graph-node-kind {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.graph-node-title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+  min-height: 32px;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.graph-node-meta {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.graph-node-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
-  align-items: baseline;
-}
-
-.node-name {
-  font-weight: 750;
-}
-
-.node-rate {
-  color: var(--accent-dark);
-  font-weight: 750;
-  white-space: nowrap;
-}
-
-.node-meta {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 4px;
+  margin-top: 1px;
 }
 
 .badge {
@@ -491,6 +674,17 @@ h2 {
     justify-content: stretch;
   }
 
+  .disabled-recipes-dropdown,
+  .disabled-recipes-dropdown summary {
+    width: 100%;
+  }
+
+  .disabled-recipe-list {
+    right: auto;
+    left: 0;
+    width: 100%;
+  }
+
   .tabs {
     width: 100%;
   }
@@ -498,6 +692,10 @@ h2 {
   .tab-button {
     flex: 1;
     min-width: 0;
+  }
+
+  .graph-viewport {
+    min-height: 520px;
   }
 
 }

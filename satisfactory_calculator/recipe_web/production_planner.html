@@ -34,8 +34,12 @@
       <div class="result-toolbar">
         <h2 id="resultHeading">结果</h2>
         <div class="result-actions">
+          <details id="disabledRecipesDropdown" class="disabled-recipes-dropdown">
+            <summary>禁用配方 <span id="disabledRecipeCount">0</span></summary>
+            <div id="disabledRecipeList" class="disabled-recipe-list"></div>
+          </details>
           <div class="tabs" role="tablist" aria-label="结果视图">
-            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">树状图</button>
+            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">方案视图</button>
             <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false">合并表格</button>
           </div>
         </div>
