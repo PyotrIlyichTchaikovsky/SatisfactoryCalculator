@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Satisfactory 生产规划</title>
+  <link rel="stylesheet" href="production_planner.css">
+  <script src="satisfactory_planner_data.js"></script>
+  <script defer src="production_planner.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Satisfactory 生产规划</h1>
+      <p id="dataSummary">正在加载配方数据...</p>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="input-panel" aria-labelledby="targetHeading">
+      <div class="panel-title-row">
+        <h2 id="targetHeading">生产目标</h2>
+        <button id="addTargetButton" class="secondary-button" type="button">添加物品</button>
+      </div>
+
+      <form id="plannerForm" autocomplete="off">
+        <div id="targetRows" class="target-rows"></div>
+        <div class="form-actions">
+          <button class="primary-button" type="submit">计算</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="result-panel" aria-labelledby="resultHeading">
+      <div class="result-toolbar">
+        <h2 id="resultHeading">结果</h2>
+        <div class="result-actions">
+          <label class="checkbox-control">
+            <input id="syncRecipesToggle" type="checkbox" checked>
+            <span>相同物品同步配方</span>
+          </label>
+          <div class="tabs" role="tablist" aria-label="结果视图">
+            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">树状图</button>
+            <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false">合并表格</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="statusMessage" class="status-message">选择一个或多个物品，并输入每分钟需要生产的数量。</div>
+      <div id="treeView" class="view-panel"></div>
+      <div id="tableView" class="view-panel hidden"></div>
+    </section>
+  </main>
+
+  <template id="targetRowTemplate">
+    <div class="target-row">
+      <div class="field item-field">
+        <label>物品</label>
+        <input class="item-input" type="text" placeholder="AI Limiter">
+        <div class="suggestions" role="listbox"></div>
+      </div>
+      <div class="field amount-field">
+        <label>每分钟数量</label>
+        <div class="amount-box">
+          <input class="amount-input" type="number" min="0" step="0.001" placeholder="60">
+          <span class="unit-label">/ min</span>
+        </div>
+      </div>
+      <button class="remove-button" type="button" title="删除物品" aria-label="删除物品">删除</button>
+    </div>
+  </template>
+</body>
+</html>

@@ -1,0 +1,112 @@
+{
+  "_help": {
+    "_read_me_first": [
+      "这个文件是本机默认配置。直接运行 py .\\recipe_exporter\\satisfactory_recipes_export.py 时，脚本会自动读取本文件。",
+      "JSON 不支持 // 注释，所以说明集中放在 _help 里。脚本会忽略所有以下划线开头的键，例如 _help。",
+      "命令行参数优先级高于本文件。例如配置里 out 是默认输出，但运行时传 --out .\\test.xlsx 会临时覆盖。",
+      "路径里的反斜杠必须写成双反斜杠，例如 F:\\\\Steam\\\\steamapps\\\\common\\\\Satisfactory。"
+    ],
+    "_recipe_filter_rule": {
+      "summary": "脚本不再区分手搓配方、机器配方、Build Gun 配方等类别。",
+      "included": "只要是 Docs 文件中真实存在的配方，并且不是原材料提取/采集类配方，就会加入 Excel。",
+      "excluded": "固定排除原材料提取/采集类配方，例如矿机、抽水机、油井、资源井等 ProducedIn 看起来像采集设备的配方。",
+      "not_generated": "脚本不会额外创造采集规则，例如 Iron Ore from Miner、Water from Water Extractor 这类规则不会人工补充。",
+      "why": "当前目标是获得完整的非采集配方宽表，所以不再提供 include_manual、exclude_manual、include_build_gun、exclude_build_gun、include_extraction 这些开关。"
+    },
+    "game_dir": {
+      "type": "string path or null",
+      "current": "F:\\Steam\\steamapps\\common\\Satisfactory",
+      "usage": "Satisfactory 的安装目录。脚本会在这个目录下自动寻找 CommunityResources\\Docs\\{lang}.json、CommunityResources\\Docs\\en-US.json、旧版 Docs.json 等数据文件。",
+      "when_to_use": "推荐日常使用这一项。只要游戏安装目录不变，直接运行脚本即可。",
+      "example_values": [
+        "F:\\Steam\\steamapps\\common\\Satisfactory",
+        "D:\\SteamLibrary\\steamapps\\common\\Satisfactory",
+        null
+      ],
+      "cli_override": "--game-dir \"F:\\Steam\\steamapps\\common\\Satisfactory\"",
+      "notes": "如果 docs_json 不为 null，docs_json 会直接指定文件路径，此项不会用于找数据源。"
+    },
+    "docs_json": {
+      "type": "string path or null",
+      "current": null,
+      "usage": "直接指定要读取的文档 JSON 文件。新版 Satisfactory 通常是 CommunityResources\\Docs\\en-US.json，旧版可能叫 Docs.json。",
+      "when_to_use": "当自动按 game_dir + lang 找不到文件，或者你想强制读取某个语言文件时使用。",
+      "example_values": [
+        "F:\\Steam\\steamapps\\common\\Satisfactory\\CommunityResources\\Docs\\en-US.json",
+        "F:\\Steam\\steamapps\\common\\Satisfactory\\CommunityResources\\Docs\\zh-Hans.json",
+        null
+      ],
+      "cli_override": "--docs-json \"F:\\Steam\\steamapps\\common\\Satisfactory\\CommunityResources\\Docs\\en-US.json\"",
+      "notes": "docs_json、game_dir、auto 三种数据源方式互斥。配置里建议只启用 game_dir 或 docs_json 其中一种。"
+    },
+    "auto": {
+      "type": "boolean",
+      "current": false,
+      "usage": "是否自动扫描常见 Steam 安装路径来寻找 Satisfactory 数据文件。",
+      "when_to_use": "不知道游戏装在哪里时可以设为 true；已知 game_dir 时建议保持 false。",
+      "example_values": [
+        true,
+        false
+      ],
+      "cli_override": "--auto",
+      "notes": "如果 game_dir 或 docs_json 已配置，auto 没必要开启。"
+    },
+    "out": {
+      "type": "string path",
+      "current": "..\\raw_data\\Satisfactory_Recipes_Wide.xlsx",
+      "usage": "生成的 Excel 文件路径。配置文件里的相对路径以本配置文件所在目录为基准；命令行 --out 的相对路径以当前工作目录为基准。",
+      "when_to_use": "想改文件名、保存到桌面、或保留多个版本时修改这一项。",
+      "example_values": [
+        "..\\raw_data\\Satisfactory_Recipes_Wide.xlsx",
+        "output\\Satisfactory_Recipes_Wide.xlsx",
+        "E:\\MyWork\\SatisfactoryCalclator\\pythonProject\\raw_data\\Satisfactory_Recipes_Wide.xlsx"
+      ],
+      "cli_override": "--out \".\\raw_data\\Satisfactory_Recipes_Wide.xlsx\"",
+      "notes": "如果目标文件已存在，脚本会覆盖它。Excel 正在打开该文件时，Windows 可能阻止覆盖。"
+    },
+    "lang": {
+      "type": "string",
+      "current": "en-US",
+      "usage": "选择 CommunityResources\\Docs 目录下的语言 JSON 文件名。脚本会优先找 {lang}.json。",
+      "when_to_use": "想导出英文名就用 en-US；想导出简体中文名可尝试 zh-Hans；想导出繁体中文名可尝试 zh-Hant。",
+      "example_values": [
+        "en-US",
+        "zh-Hans",
+        "zh-Hant"
+      ],
+      "cli_override": "--lang en-US",
+      "notes": "如果指定语言文件不存在，脚本会回退尝试 en-US.json 和旧版 Docs.json。"
+    },
+    "wide_only": {
+      "type": "boolean",
+      "current": false,
+      "usage": "是否只生成 RecipesWide 一个工作表。",
+      "when_to_use": "只想快速看宽表、不需要 Items、RecipeInputs、RecipeOutputs 等辅助表时设为 true。",
+      "example_values": [
+        true,
+        false
+      ],
+      "cli_override": "--wide-only",
+      "notes": "false 会生成完整工作簿：README、RecipesWide、Items、RecipesLong、RecipeInputs、RecipeOutputs、VersionInfo、Validation。"
+    },
+    "debug_json": {
+      "type": "boolean",
+      "current": false,
+      "usage": "是否额外导出一个中间调试 JSON 文件。",
+      "when_to_use": "排查配方解析问题、想看脚本解析后的结构化数据时设为 true。",
+      "example_values": [
+        true,
+        false
+      ],
+      "cli_override": "--debug-json",
+      "notes": "开启后会在 Excel 旁边生成同名 .debug.json 文件，文件可能比较大。日常使用建议 false。"
+    }
+  },
+  "game_dir": "F:\\Steam\\steamapps\\common\\Satisfactory",
+  "docs_json": null,
+  "auto": false,
+  "out": "..\\raw_data\\Satisfactory_Recipes_Wide.xlsx",
+  "lang": "en-US",
+  "wide_only": false,
+  "debug_json": false
+}
