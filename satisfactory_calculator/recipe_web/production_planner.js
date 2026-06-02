@@ -1,7 +1,6 @@
 (() => {
   "use strict";
 
-  const data = window.SATISFACTORY_PLANNER_DATA;
   const targetRows = document.getElementById("targetRows");
   const targetTemplate = document.getElementById("targetRowTemplate");
   const addTargetButton = document.getElementById("addTargetButton");
@@ -10,70 +9,80 @@
   const statusMessage = document.getElementById("statusMessage");
   const treeView = document.getElementById("treeView");
   const tableView = document.getElementById("tableView");
-  const syncRecipesToggle = document.getElementById("syncRecipesToggle");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
-  const globalRecipeSelections = new Map();
-  const localRecipeSelections = new Map();
-  let lastTargets = [];
+
+  let items = [];
+  const itemsByClass = new Map();
   let activeTab = "tree";
-
-  if (!data || !Array.isArray(data.items) || !Array.isArray(data.recipes)) {
-    setStatus("缺少页面数据。请先运行 py .\\recipe_exporter\\satisfactory_recipes_export.py。", true);
-    return;
-  }
-
-  const items = [...data.items].sort((a, b) => {
-    if (a.producible !== b.producible) {
-      return a.producible ? -1 : 1;
-    }
-    return a.name.localeCompare(b.name);
-  });
-  const itemsByClass = new Map(items.map((item) => [item.className, item]));
-  const recipesByOutput = new Map();
-
-  for (const recipe of data.recipes) {
-    for (const output of recipe.outputs) {
-      if (!recipesByOutput.has(output.itemClass)) {
-        recipesByOutput.set(output.itemClass, []);
-      }
-      recipesByOutput.get(output.itemClass).push({ recipe, output });
-    }
-  }
-
-  for (const choices of recipesByOutput.values()) {
-    choices.sort(compareRecipeChoices);
-  }
-
-  dataSummary.textContent = `${formatInteger(data.recipeCount)} 条配方 · ${formatInteger(items.length)} 个物品 · ${data.sourceDocsJson}`;
 
   addTargetButton.addEventListener("click", () => addTargetRow());
   plannerForm.addEventListener("submit", (event) => {
     event.preventDefault();
     calculate();
   });
-  syncRecipesToggle.addEventListener("change", () => {
-    if (lastTargets.length) {
-      recalculateFromTargets("已更新配方同步设置。", false);
-    }
-  });
-  treeView.addEventListener("change", (event) => {
-    const select = event.target.closest(".recipe-select");
-    if (!select) {
-      return;
-    }
-    if (syncRecipesToggle.checked) {
-      globalRecipeSelections.set(select.dataset.itemClass, select.value);
-    } else {
-      localRecipeSelections.set(select.dataset.nodeKey, select.value);
-    }
-    recalculateFromTargets("已更新配方选择。", false);
-  });
-
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
 
   addTargetRow();
+  loadInitialData();
+
+  async function loadInitialData() {
+    try {
+      const [summary, itemPayload] = await Promise.all([fetchJson("/api/summary"), fetchJson("/api/items")]);
+      items = Array.isArray(itemPayload.items) ? itemPayload.items : [];
+      itemsByClass.clear();
+      items.forEach((item) => itemsByClass.set(item.className, item));
+      dataSummary.textContent = summaryText(summary);
+      setStatus("已从服务端加载 Excel 配方数据。请选择一个或多个物品，并输入每分钟需要生产的数量。", false);
+    } catch (error) {
+      dataSummary.textContent = "无法连接生产规划服务";
+      setStatus(`无法加载服务端数据：${error.message}。请通过 python recipe_web/production_planner_server.py 启动服务后访问页面。`, true);
+    }
+  }
+
+  async function calculate() {
+    const targets = collectTargets();
+    if (!targets.length) {
+      return;
+    }
+
+    setStatus("正在请求服务端计算...", false);
+    try {
+      const result = await fetchJson("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targets: targets.map((target) => ({
+            itemClass: target.item.className,
+            rate: target.rate,
+          })),
+        }),
+      });
+      renderTree(result.roots || []);
+      renderMergedTable(result.totals || []);
+      selectTab("tree");
+      const targetCount = result.summary?.targetCount ?? targets.length;
+      const totalRows = result.summary?.totalRows ?? 0;
+      setStatus(`已计算 ${formatInteger(targetCount)} 个生产目标，合并得到 ${formatInteger(totalRows)} 行材料。`, false);
+    } catch (error) {
+      setStatus(`计算失败：${error.message}`, true);
+    }
+  }
+
+  async function fetchJson(url, options = {}) {
+    const response = await fetch(url, options);
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (_error) {
+      payload = null;
+    }
+    if (!response.ok) {
+      throw new Error(payload?.error || `${response.status} ${response.statusText}`);
+    }
+    return payload || {};
+  }
 
   function addTargetRow(initialItem = null, initialRate = "") {
     const fragment = targetTemplate.content.cloneNode(true);
@@ -258,38 +267,6 @@
     return Infinity;
   }
 
-  function calculate() {
-    const targets = collectTargets();
-    if (!targets.length) {
-      return;
-    }
-
-    lastTargets = targets;
-    recalculateFromTargets(null, true);
-  }
-
-  function recalculateFromTargets(message, focusTree) {
-    if (!lastTargets.length) {
-      return;
-    }
-
-    const roots = lastTargets.map((target, index) => buildTree(target.item.className, target.rate, [], `root-${index}`));
-    const totals = new Map();
-    roots.forEach((root) => collectTotals(root, totals, true));
-
-    renderTree(roots);
-    renderMergedTable(totals);
-    if (focusTree) {
-      selectTab("tree");
-    } else {
-      selectTab(activeTab);
-    }
-    setStatus(
-      message || `已计算 ${formatInteger(lastTargets.length)} 个生产目标，合并得到 ${formatInteger(totals.size)} 行材料。`,
-      false,
-    );
-  }
-
   function collectTargets() {
     const rows = Array.from(targetRows.querySelectorAll(".target-row"));
     const targets = [];
@@ -352,93 +329,12 @@
     return null;
   }
 
-  function buildTree(itemClass, rate, path, nodeKey) {
-    const item = itemForClass(itemClass);
-    const node = {
-      key: nodeKey,
-      item,
-      rate,
-      children: [],
-      recipe: null,
-      choices: [],
-      choiceCount: 0,
-      raw: false,
-      cycle: false,
-    };
-
-    if (path.includes(itemClass)) {
-      node.cycle = true;
-      return node;
-    }
-
-    if (item.isRawResource) {
-      node.raw = true;
-      return node;
-    }
-
-    const choices = recipesByOutput.get(itemClass) || [];
-    node.choices = choices;
-    node.choiceCount = choices.length;
-    if (!choices.length) {
-      node.raw = true;
-      return node;
-    }
-
-    const choice = selectedRecipeChoice(itemClass, nodeKey, choices);
-    const outputRate = Number(choice.output.perMin);
-    if (!Number.isFinite(outputRate) || outputRate <= 0) {
-      node.raw = true;
-      return node;
-    }
-
-    const scale = rate / outputRate;
-    node.recipe = choice.recipe;
-    const nextPath = [...path, itemClass];
-    node.children = choice.recipe.inputs.map((input, index) => {
-      const childRate = Number(input.perMin) * scale;
-      return buildTree(input.itemClass, childRate, nextPath, `${nodeKey}.${index}-${input.itemClass}`);
-    });
-    return node;
-  }
-
-  function selectedRecipeChoice(itemClass, nodeKey, choices) {
-    const selectedRecipeId = recipeSelectionFor(itemClass, nodeKey);
-    if (selectedRecipeId) {
-      const selectedChoice = choices.find((choice) => choice.recipe.id === selectedRecipeId);
-      if (selectedChoice) {
-        return selectedChoice;
-      }
-    }
-    return choices[0];
-  }
-
-  function recipeSelectionFor(itemClass, nodeKey) {
-    if (syncRecipesToggle.checked) {
-      return globalRecipeSelections.get(itemClass);
-    }
-    return localRecipeSelections.get(nodeKey) || globalRecipeSelections.get(itemClass);
-  }
-
-  function collectTotals(node, totals, isRoot) {
-    if (!isRoot) {
-      const key = node.item.className;
-      const current = totals.get(key) || {
-        item: node.item,
-        rate: 0,
-        raw: isTerminalRaw(node.item),
-        recipes: new Set(),
-      };
-      current.rate += node.rate;
-      current.raw = current.raw || node.raw;
-      if (node.recipe) {
-        current.recipes.add(node.recipe.name);
-      }
-      totals.set(key, current);
-    }
-    node.children.forEach((child) => collectTotals(child, totals, false));
-  }
-
   function renderTree(roots) {
+    if (!roots.length) {
+      treeView.replaceChildren(makeEmptyMessage("尚未计算生产目标。"));
+      return;
+    }
+
     const list = document.createElement("ol");
     list.className = "tree-list";
     roots.forEach((root) => list.appendChild(renderNode(root, true)));
@@ -484,9 +380,6 @@
     meta.textContent = nodeMetaText(node);
 
     main.append(title, meta);
-    if (!node.raw && !node.cycle && node.choices.length > 1) {
-      main.appendChild(renderRecipeSelector(node));
-    }
     card.appendChild(main);
     li.appendChild(card);
 
@@ -500,44 +393,11 @@
     return li;
   }
 
-  function renderRecipeSelector(node) {
-    const row = document.createElement("div");
-    row.className = "recipe-select-row";
-
-    const label = document.createElement("label");
-    label.textContent = "配方";
-    label.setAttribute("for", `recipe-${node.key}`);
-
-    const select = document.createElement("select");
-    select.className = "recipe-select";
-    select.id = `recipe-${node.key}`;
-    select.dataset.nodeKey = node.key;
-    select.dataset.itemClass = node.item.className;
-
-    node.choices.forEach((choice) => {
-      const option = document.createElement("option");
-      option.value = choice.recipe.id;
-      option.textContent = recipeOptionText(choice);
-      option.selected = node.recipe && choice.recipe.id === node.recipe.id;
-      select.appendChild(option);
-    });
-
-    row.append(label, select);
-    return row;
-  }
-
   function renderMergedTable(totals) {
-    if (!totals.size) {
+    if (!totals.length) {
       tableView.replaceChildren(makeEmptyMessage("所选目标没有下游材料需求。"));
       return;
     }
-
-    const rows = Array.from(totals.values()).sort((a, b) => {
-      if (a.raw !== b.raw) {
-        return a.raw ? 1 : -1;
-      }
-      return a.item.name.localeCompare(b.item.name);
-    });
 
     const wrap = document.createElement("div");
     wrap.className = "merged-table-wrap";
@@ -554,13 +414,13 @@
     thead.appendChild(headRow);
 
     const tbody = document.createElement("tbody");
-    rows.forEach((row) => {
+    totals.forEach((row) => {
       const tr = document.createElement("tr");
       appendCell(tr, row.item.name);
       appendCell(tr, formatNumber(row.rate), "number-cell");
       appendCell(tr, row.item.unit);
       appendCell(tr, row.raw ? "原材料" : "中间材料");
-      appendCell(tr, Array.from(row.recipes).join(", "));
+      appendCell(tr, Array.isArray(row.recipes) ? row.recipes.join(", ") : "");
       tbody.appendChild(tr);
     });
 
@@ -574,56 +434,30 @@
       return "检测到循环，已停止展开。";
     }
     if (node.raw) {
-      return node.item.isRawResource ? "原材料，已停止展开。" : "导出的数据中没有可生产该物品的配方。";
+      return node.item.isRawResource ? "原材料，已停止展开。" : "Excel 数据中没有可生产该物品的配方。";
     }
     const producedIn = node.recipe.producedIn.length ? node.recipe.producedIn.join(", ") : "未知生产设备";
-    const extra = node.choiceCount > 1 ? ` · 可选 ${node.choiceCount} 个配方` : "";
-    return `当前配方：${node.recipe.name} · ${producedIn}${extra}`;
+    const extra = node.choiceCount > 1 ? ` · 默认排序第 1 / ${node.choiceCount} 个候选配方` : "";
+    return `默认配方：${node.recipe.name} · ${producedIn}${extra}`;
   }
 
-  function recipeOptionText(choice) {
-    const parts = [choice.recipe.name, `${formatNumber(Number(choice.output.perMin))} ${choice.output.unit}/min`];
-    if (choice.recipe.isAlternate) {
-      parts.push("替代配方");
-    }
-    if (choice.recipe.producedIn.length) {
-      parts.push(choice.recipe.producedIn.join(", "));
+  function summaryText(summary) {
+    const parts = [
+      `${formatInteger(summary.recipeCount)} 条配方`,
+      `${formatInteger(summary.itemCount)} 个物品`,
+    ];
+    if (summary.generatedAt) {
+      parts.push(`Excel 生成于 ${formatTimestamp(summary.generatedAt)}`);
     }
     return parts.join(" · ");
   }
 
-  function compareRecipeChoices(a, b) {
-    const scoreA = recipeScore(a);
-    const scoreB = recipeScore(b);
-    if (scoreA !== scoreB) {
-      return scoreA - scoreB;
+  function formatTimestamp(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
     }
-    return a.recipe.name.localeCompare(b.recipe.name);
-  }
-
-  function recipeScore(choice) {
-    const recipeName = normalize(choice.recipe.name);
-    const itemName = normalize(choice.output.itemName);
-    let score = 0;
-    if (choice.recipe.isAlternate) score += 1000;
-    if (recipeName === itemName) score -= 80;
-    if (recipeName.includes(itemName)) score -= 30;
-    score += choice.recipe.inputs.length * 4;
-    return score;
-  }
-
-  function isTerminalRaw(item) {
-    return item.isRawResource || !(recipesByOutput.get(item.className) || []).length;
-  }
-
-  function itemForClass(itemClass) {
-    return itemsByClass.get(itemClass) || {
-      className: itemClass,
-      name: itemClass,
-      unit: "items",
-      producible: false,
-      isRawResource: false,
-    };
+    return date.toLocaleString("zh-CN", { hour12: false });
   }
 
   function makeBadge(text, extraClass = "") {
@@ -679,13 +513,14 @@
   }
 
   function formatNumber(value) {
-    if (!Number.isFinite(value)) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
       return "";
     }
-    if (Math.abs(value - Math.round(value)) < 1e-9) {
-      return String(Math.round(value));
+    if (Math.abs(number - Math.round(number)) < 1e-9) {
+      return String(Math.round(number));
     }
-    return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    return number.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
   }
 
   function formatInteger(value) {

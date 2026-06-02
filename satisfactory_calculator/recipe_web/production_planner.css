@@ -104,23 +104,6 @@ select {
   gap: 12px;
 }
 
-.checkbox-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 36px;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.checkbox-control input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-}
-
 h2 {
   margin: 0;
   font-size: 17px;
@@ -413,36 +396,6 @@ h2 {
   font-size: 12px;
 }
 
-.recipe-select-row {
-  display: grid;
-  grid-template-columns: auto minmax(220px, 420px);
-  gap: 8px;
-  align-items: center;
-  margin-top: 8px;
-}
-
-.recipe-select-row label {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.recipe-select {
-  min-width: 0;
-  width: 100%;
-  height: 34px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: #ffffff;
-  color: var(--text);
-  outline: none;
-}
-
-.recipe-select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
-}
-
 .badge {
   display: inline-flex;
   align-items: center;
@@ -538,10 +491,6 @@ h2 {
     justify-content: stretch;
   }
 
-  .checkbox-control {
-    justify-content: flex-start;
-  }
-
   .tabs {
     width: 100%;
   }
@@ -551,7 +500,4 @@ h2 {
     min-width: 0;
   }
 
-  .recipe-select-row {
-    grid-template-columns: 1fr;
-  }
 }

@@ -25,11 +25,9 @@ from xml.sax.saxutils import escape
 SCRIPT_VERSION = "0.1.0"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
 EXCEL_FILE_NAME = "Satisfactory_Recipes_Wide.xlsx"
-PLANNER_DATA_FILE_NAME = "satisfactory_planner_data.js"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 RAW_DATA_DIR = PROJECT_ROOT / "raw_data"
-RECIPE_WEB_DIR = PROJECT_ROOT / "recipe_web"
 
 RECIPE_NATIVE_CLASS = "FGRecipe"
 ITEM_AMOUNT_RE = re.compile(
@@ -90,14 +88,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         sheets = build_sheets(recipes, items, docs_path, args)
         write_xlsx(args.out, sheets)
-        planner_data_path = RECIPE_WEB_DIR / PLANNER_DATA_FILE_NAME
-        write_planner_data_js(planner_data_path, recipes, items, docs_path)
 
         if args.debug_json:
             write_debug_json(args.out, recipes, items, docs_path)
 
         print(f"Wrote {args.out}")
-        print(f"Planner data: {planner_data_path}")
         print(f"Recipes: {len(recipes)}")
         print(f"Source: {docs_path}")
         return 0
@@ -737,78 +732,6 @@ def write_debug_json(out_path: Path, recipes: Sequence[Recipe], items: dict[str,
     }
     with debug_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
-
-
-def write_planner_data_js(path: Path, recipes: Sequence[Recipe], items: dict[str, ItemInfo], docs_path: Path) -> None:
-    item_infos = {info.class_name: info for info in items.values()}
-    used_items: dict[str, dict[str, Any]] = {}
-    producible_classes: set[str] = set()
-
-    for recipe in recipes:
-        for item in recipe.outputs:
-            producible_classes.add(item.item_class)
-            remember_planner_item(used_items, item_infos, item)
-        for item in recipe.inputs:
-            remember_planner_item(used_items, item_infos, item)
-
-    payload = {
-        "scriptVersion": SCRIPT_VERSION,
-        "generatedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "sourceDocsJson": str(docs_path),
-        "recipeCount": len(recipes),
-        "items": sorted(
-            (
-                {
-                    **item,
-                    "producible": class_name in producible_classes,
-                }
-                for class_name, item in used_items.items()
-            ),
-            key=lambda value: (not value["producible"], value["name"].lower(), value["className"]),
-        ),
-        "recipes": [
-            {
-                "id": recipe.recipe_id,
-                "name": recipe.recipe_name,
-                "isAlternate": recipe.is_alternate,
-                "producedIn": recipe.produced_in,
-                "durationSec": clean_number(recipe.duration_sec),
-                "inputs": [planner_ingredient_to_dict(item) for item in recipe.inputs],
-                "outputs": [planner_ingredient_to_dict(item) for item in recipe.outputs],
-            }
-            for recipe in recipes
-        ],
-    }
-    js = "window.SATISFACTORY_PLANNER_DATA = "
-    js += json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    js += ";\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(js, encoding="utf-8")
-
-
-def remember_planner_item(
-    used_items: dict[str, dict[str, Any]],
-    item_infos: dict[str, ItemInfo],
-    ingredient: Ingredient,
-) -> None:
-    info = item_infos.get(ingredient.item_class)
-    used_items[ingredient.item_class] = {
-        "className": ingredient.item_class,
-        "name": ingredient.item_name,
-        "unit": ingredient.unit,
-        "form": "" if info is None else info.form,
-        "isRawResource": False if info is None else "FGResourceDescriptor" in info.native_class,
-    }
-
-
-def planner_ingredient_to_dict(item: Ingredient) -> dict[str, Any]:
-    return {
-        "itemClass": item.item_class,
-        "itemName": item.item_name,
-        "amount": clean_number(item.amount),
-        "unit": item.unit,
-        "perMin": clean_number(item.per_min),
-    }
 
 
 def ingredient_to_dict(item: Ingredient) -> dict[str, Any]:

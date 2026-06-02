@@ -2,20 +2,26 @@
 
 ## Directory Layout
 
-- `recipe_exporter/`: code and config for reading Satisfactory game data and exporting recipe data.
-- `recipe_web/`: interactive recipe planner web page and its static assets.
+- `recipe_exporter/`: code and config for reading Satisfactory game data and exporting the Excel workbook.
+- `recipe_web/`: Python web service, calculation module, and static assets for the production planner.
 - `raw_data/`: generated Excel workbooks from the exporter.
 
 ## Usage
 
-Generate the Excel workbook and refresh the web planner data:
+Generate or refresh the Excel workbook:
 
 ```powershell
 py .\recipe_exporter\satisfactory_recipes_export.py
 ```
 
-Open the planner page:
+Start the planner web service:
+
+```powershell
+py .\recipe_web\production_planner_server.py
+```
+
+Open the planner page in a browser:
 
 ```text
-recipe_web/production_planner.html
+http://127.0.0.1:8000/
 ```
