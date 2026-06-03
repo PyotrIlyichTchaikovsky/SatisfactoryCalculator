@@ -82,6 +82,7 @@ class ProductionPlanner:
         excel_path: Path,
         items: dict[str, Item],
         recipes: tuple[Recipe, ...],
+        raw_source_classes: set[str],
         version_info: dict[str, Any],
     ) -> None:
         self.excel_path = excel_path
@@ -94,11 +95,7 @@ class ProductionPlanner:
             for recipe in recipes
             for output in recipe.outputs
         }
-        self.raw_source_classes = {
-            item.class_name
-            for item in items.values()
-            if item.is_raw_resource or item.class_name not in self.output_classes
-        }
+        self.raw_source_classes = set(raw_source_classes)
         self.items_list = sorted(
             items.values(),
             key=lambda item: (not item.producible, item.name.lower(), item.class_name),
@@ -108,12 +105,13 @@ class ProductionPlanner:
     def from_excel(cls, excel_path: str | Path = DEFAULT_EXCEL_PATH) -> "ProductionPlanner":
         path = Path(excel_path).expanduser().resolve()
         sheets = _load_xlsx_sheets(path)
-        required_sheets = {"Items", "RecipesLong", "RecipeInputs", "RecipeOutputs"}
+        required_sheets = {"Items", "RawMaterials", "RecipesLong", "RecipeInputs", "RecipeOutputs"}
         missing = sorted(required_sheets - set(sheets))
         if missing:
             raise PlannerError(f"Excel workbook is missing required sheets: {', '.join(missing)}")
 
         item_infos = _load_item_infos(sheets["Items"])
+        raw_source_classes = _load_raw_material_classes(sheets["RawMaterials"])
         inputs_by_recipe, input_item_names = _load_recipe_io(sheets["RecipeInputs"])
         outputs_by_recipe, output_item_names = _load_recipe_io(sheets["RecipeOutputs"])
         recipes = _load_recipes(sheets["RecipesLong"], inputs_by_recipe, outputs_by_recipe)
@@ -123,12 +121,13 @@ class ProductionPlanner:
         producible_classes = set(output_item_names)
         item_names = {**input_item_names, **output_item_names}
         items = _build_items(used_classes, producible_classes, item_names, item_infos)
-        return cls(path, items, recipes, version_info)
+        return cls(path, items, recipes, raw_source_classes, version_info)
 
     def summary(self) -> dict[str, Any]:
         return {
             "recipeCount": len(self.recipes),
             "itemCount": len(self.items),
+            "rawMaterialCount": len(self.raw_source_classes),
             "excelPath": str(self.excel_path),
             "sourceDocsJson": self.version_info.get("SourceDocsJson", ""),
             "generatedAt": self.version_info.get("GeneratedAt", ""),
@@ -693,6 +692,17 @@ def _load_item_infos(rows: list[list[Any]]) -> dict[str, _ItemInfo]:
             native_class=_text(row.get("NativeClass")),
         )
     return infos
+
+
+def _load_raw_material_classes(rows: list[list[Any]]) -> set[str]:
+    raw_classes: set[str] = set()
+    for row in _dict_rows(rows):
+        item_class = _text(row.get("ItemClass") or row.get("ClassName"))
+        if item_class:
+            raw_classes.add(item_class)
+    if not raw_classes:
+        raise PlannerError("RawMaterials sheet must contain at least one ItemClass.")
+    return raw_classes
 
 
 def _load_recipe_io(rows: list[list[Any]]) -> tuple[dict[str, list[Ingredient]], dict[str, str]]:

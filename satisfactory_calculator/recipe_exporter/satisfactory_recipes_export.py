@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Export Satisfactory Docs.json recipes to a wide Excel workbook.
 
-The script intentionally reads only recipes already present in Docs.json. It
-does not invent miner, water extractor, oil extractor, or other extraction
-rules.
+The script reads real Docs.json recipes, excludes extraction rules, and adds
+generator-derived virtual power recipes so power and generator byproducts can
+participate in planning.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import Any, Iterable, Sequence
 from xml.sax.saxutils import escape
 
 
-SCRIPT_VERSION = "0.1.0"
+SCRIPT_VERSION = "0.2.0"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
 EXCEL_FILE_NAME = "Satisfactory_Recipes_Wide.xlsx"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,6 +36,21 @@ ITEM_AMOUNT_RE = re.compile(
 )
 CLASS_PATH_RE = re.compile(r"'(?P<path>/[^']+)'")
 INVALID_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+SYNTHETIC_POWER_NATIVE_CLASS = "SyntheticPowerItem"
+SYNTHETIC_POWER_SOURCE_CLASS = "SyntheticGeneratorPowerRecipe"
+POWER_OUTPUT_BY_GENERATOR = {
+    "Build_GeneratorBiomass_Automated_C": ("Desc_Power_Biomass_C", "Biomass Power"),
+    "Build_GeneratorCoal_C": ("Desc_Power_Coal_C", "Coal Power"),
+    "Build_GeneratorFuel_C": ("Desc_Power_Fuel_C", "Fuel Power"),
+    "Build_GeneratorNuclear_C": ("Desc_Power_Nuclear_C", "Nuclear Power"),
+    "Build_GeneratorGeoThermal_C": ("Desc_Power_Geothermal_C", "Geothermal Power"),
+}
+SUPPLEMENTAL_RATE_PER_MIN = {
+    ("Build_GeneratorCoal_C", "Desc_Water_C"): 45.0,
+    ("Build_GeneratorNuclear_C", "Desc_Water_C"): 240.0,
+}
+RAW_REASON_RESOURCE_DESCRIPTOR = "游戏资源描述符（NativeClass 包含 FGResourceDescriptor）"
+RAW_REASON_NO_RECIPE_OUTPUT = "没有非采集配方产出（RecipeOutputs 中不存在该物品）"
 
 
 @dataclass(frozen=True)
@@ -47,6 +62,7 @@ class ItemInfo:
     stack_size: str = ""
     sink_points: str = ""
     native_class: str = ""
+    energy_value: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -82,8 +98,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         classes = list(iter_docs_classes(data))
         display_names = build_display_name_index(classes)
         items = build_item_index(classes, display_names)
+        add_power_items(items)
         recipes = build_recipes(classes, display_names, items, docs_path)
         recipes = filter_recipes(recipes, args)
+        recipes.extend(build_power_recipes(classes, display_names, items, docs_path))
         recipes.sort(key=lambda recipe: (", ".join(recipe.produced_in).lower(), recipe.recipe_name.lower(), recipe.is_alternate))
 
         sheets = build_sheets(recipes, items, docs_path, args)
@@ -375,11 +393,28 @@ def build_item_index(
             stack_size=string_value(obj.get("mStackSize")),
             sink_points=string_value(obj.get("mResourceSinkPoints")),
             native_class=native_class,
+            energy_value=float_value(obj.get("mEnergyValue")),
         )
         items[class_name] = info
         if class_name.endswith("_C"):
             items[class_name[:-2]] = info
     return items
+
+
+def add_power_items(items: dict[str, ItemInfo]) -> None:
+    for item_class, display_name in dict(POWER_OUTPUT_BY_GENERATOR.values()).items():
+        if item_class in items:
+            continue
+        info = ItemInfo(
+            class_name=item_class,
+            display_name=display_name,
+            form="RF_POWER",
+            unit="MW",
+            native_class=SYNTHETIC_POWER_NATIVE_CLASS,
+        )
+        items[item_class] = info
+        if item_class.endswith("_C"):
+            items[item_class[:-2]] = info
 
 
 def build_recipes(
@@ -424,6 +459,184 @@ def build_recipes(
         recipes.append(recipe)
 
     return recipes
+
+
+def build_power_recipes(
+    classes: Sequence[tuple[str, dict[str, Any]]],
+    display_names: dict[str, str],
+    items: dict[str, ItemInfo],
+    docs_path: Path,
+) -> list[Recipe]:
+    recipes: list[Recipe] = []
+    source_file = f"{docs_path}#generator-power"
+
+    for native_class, obj in classes:
+        generator_class = string_value(obj.get("ClassName"))
+        power_definition = POWER_OUTPUT_BY_GENERATOR.get(generator_class)
+        if not power_definition:
+            continue
+
+        power_class, _power_name = power_definition
+        power_item = item_info_for_class(power_class, items)
+        if power_item is None:
+            continue
+
+        generator_name = display_names.get(generator_class) or string_value(obj.get("mDisplayName")) or humanize_class_name(generator_class)
+        power_rate = generator_power_rate(generator_class, obj)
+        if power_rate <= 0:
+            continue
+
+        if generator_class == "Build_GeneratorGeoThermal_C":
+            recipes.append(
+                Recipe(
+                    recipe_id=f"Recipe_Power_{generator_class}",
+                    recipe_name=f"Power: {generator_name}",
+                    is_alternate=False,
+                    produced_in=[generator_name],
+                    produced_in_classes=[generator_class],
+                    duration_sec=60.0,
+                    outputs=[ingredient_with_rate(power_class, power_item, power_rate)],
+                    source_class=SYNTHETIC_POWER_SOURCE_CLASS,
+                    source_file=source_file,
+                )
+            )
+            continue
+
+        fuel_entries = obj.get("mFuel")
+        if not isinstance(fuel_entries, list):
+            continue
+
+        seen_fuels: set[str] = set()
+        for fuel_entry in fuel_entries:
+            if not isinstance(fuel_entry, dict):
+                continue
+            fuel_class = clean_class_ref(fuel_entry.get("mFuelClass"))
+            if not fuel_class or fuel_class in seen_fuels:
+                continue
+            seen_fuels.add(fuel_class)
+
+            recipe = build_fueled_power_recipe(
+                native_class=native_class,
+                generator_class=generator_class,
+                generator_name=generator_name,
+                generator_obj=obj,
+                fuel_entry=fuel_entry,
+                fuel_class=fuel_class,
+                power_class=power_class,
+                power_item=power_item,
+                power_rate=power_rate,
+                items=items,
+                source_file=source_file,
+            )
+            if recipe is not None:
+                recipes.append(recipe)
+
+    return recipes
+
+
+def build_fueled_power_recipe(
+    native_class: str,
+    generator_class: str,
+    generator_name: str,
+    generator_obj: dict[str, Any],
+    fuel_entry: dict[str, Any],
+    fuel_class: str,
+    power_class: str,
+    power_item: ItemInfo,
+    power_rate: float,
+    items: dict[str, ItemInfo],
+    source_file: str,
+) -> Recipe | None:
+    fuel_item = item_info_for_class(fuel_class, items)
+    if fuel_item is None or fuel_item.energy_value <= 0:
+        return None
+
+    fuel_raw_per_min = 60.0 * power_rate / fuel_item.energy_value
+    fuel_per_min = normalized_amount(fuel_raw_per_min, fuel_item.unit)
+    if fuel_per_min <= 0:
+        return None
+
+    inputs = [ingredient_with_rate(fuel_class, fuel_item, fuel_per_min)]
+
+    supplemental_class = clean_class_ref(fuel_entry.get("mSupplementalResourceClass"))
+    if supplemental_class:
+        supplemental_item = item_info_for_class(supplemental_class, items)
+        supplemental_rate = SUPPLEMENTAL_RATE_PER_MIN.get((generator_class, supplemental_class), 0.0)
+        if supplemental_item is not None and supplemental_rate > 0:
+            inputs.append(ingredient_with_rate(supplemental_class, supplemental_item, supplemental_rate))
+
+    outputs = [ingredient_with_rate(power_class, power_item, power_rate)]
+    byproduct = byproduct_ingredient(generator_obj, fuel_entry, fuel_item, fuel_per_min, items)
+    if byproduct is not None:
+        outputs.append(byproduct)
+
+    return Recipe(
+        recipe_id=f"Recipe_Power_{generator_class}_{fuel_class}",
+        recipe_name=f"Power: {generator_name} ({fuel_item.display_name})",
+        is_alternate=False,
+        produced_in=[generator_name],
+        produced_in_classes=[generator_class],
+        duration_sec=60.0,
+        inputs=inputs,
+        outputs=outputs,
+        source_class=native_class,
+        source_file=source_file,
+    )
+
+
+def byproduct_ingredient(
+    generator_obj: dict[str, Any],
+    fuel_entry: dict[str, Any],
+    fuel_item: ItemInfo,
+    fuel_per_min: float,
+    items: dict[str, ItemInfo],
+) -> Ingredient | None:
+    byproduct_class = clean_class_ref(fuel_entry.get("mByproduct"))
+    byproduct_raw_amount = float_value(fuel_entry.get("mByproductAmount"))
+    byproduct_item = item_info_for_class(byproduct_class, items) if byproduct_class else None
+    if not byproduct_class or byproduct_item is None or byproduct_raw_amount <= 0:
+        return None
+
+    fuel_load_raw = float_value(generator_obj.get("mFuelLoadAmount")) or 1.0
+    fuel_load_amount = normalized_amount(fuel_load_raw, fuel_item.unit)
+    if fuel_load_amount <= 0:
+        return None
+
+    fuel_loads_per_min = fuel_per_min / fuel_load_amount
+    byproduct_amount = normalized_amount(byproduct_raw_amount, byproduct_item.unit)
+    byproduct_per_min = byproduct_amount * fuel_loads_per_min
+    if byproduct_per_min <= 0:
+        return None
+    return ingredient_with_rate(byproduct_class, byproduct_item, byproduct_per_min)
+
+
+def generator_power_rate(generator_class: str, obj: dict[str, Any]) -> float:
+    fixed_power = float_value(obj.get("mPowerProduction"))
+    if fixed_power > 0:
+        return fixed_power
+    if generator_class == "Build_GeneratorGeoThermal_C":
+        return float_value(obj.get("mVariablePowerProductionFactor"))
+    return 0.0
+
+
+def ingredient_with_rate(item_class: str, item: ItemInfo, per_min: float) -> Ingredient:
+    return Ingredient(
+        item_class=item_class,
+        item_name=item.display_name,
+        raw_amount=denormalized_amount(per_min, item.unit),
+        amount=per_min,
+        unit=item.unit,
+        per_min=per_min,
+    )
+
+
+def clean_class_ref(value: Any) -> str:
+    text = string_value(value)
+    if not text or text.lower() == "none":
+        return ""
+    if "/" in text or "." in text:
+        return class_name_from_path(text)
+    return text
 
 
 def parse_item_amounts(value: Any, items: dict[str, ItemInfo]) -> list[Ingredient]:
@@ -517,6 +730,7 @@ def build_sheets(
         ("RecipesWide", wide_rows),
         ("RecipeSummary", build_recipe_summary_rows(recipes)),
         ("Items", build_items_rows(unique_items)),
+        ("RawMaterials", build_raw_material_rows(recipes, items)),
         ("RecipesLong", build_recipes_long_rows(recipes)),
         ("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
         ("RecipeOutputs", build_recipe_io_rows(recipes, input_side=False)),
@@ -591,6 +805,7 @@ def build_readme_rows(
         ["ConfigFile", str(args.config)],
         ["NoGeneratedExtractionRules", True],
         ["FilteringRule", "Only extraction/raw-resource gathering recipes are excluded; all other real Docs recipes are included."],
+        ["GeneratedPowerRecipes", "Generator fuel rules are converted into virtual power recipes; extraction rules remain excluded."],
         ["RecipeCount", len(recipes)],
         ["KnownItemCount", len({item.class_name for item in items.values()})],
         ["SourceDocsJson", str(docs_path)],
@@ -598,10 +813,60 @@ def build_readme_rows(
 
 
 def build_items_rows(items: Sequence[ItemInfo]) -> list[list[Any]]:
-    rows = [["ClassName", "DisplayName", "Form", "Unit", "StackSize", "ResourceSinkPoints", "NativeClass"]]
+    rows = [["ClassName", "DisplayName", "Form", "Unit", "StackSize", "ResourceSinkPoints", "NativeClass", "EnergyValue"]]
     for item in items:
-        rows.append([item.class_name, item.display_name, item.form, item.unit, item.stack_size, item.sink_points, item.native_class])
+        rows.append(
+            [
+                item.class_name,
+                item.display_name,
+                item.form,
+                item.unit,
+                item.stack_size,
+                item.sink_points,
+                item.native_class,
+                clean_number(item.energy_value),
+            ]
+        )
     return rows
+
+
+def build_raw_material_rows(recipes: Sequence[Recipe], items: dict[str, ItemInfo]) -> list[list[Any]]:
+    output_classes = {
+        output.item_class
+        for recipe in recipes
+        for output in recipe.outputs
+    }
+    used_classes = {
+        ingredient.item_class
+        for recipe in recipes
+        for ingredient in (*recipe.inputs, *recipe.outputs)
+    }
+
+    rows = [["ItemClass", "ItemName", "Reason"]]
+    for item_class in sorted(used_classes, key=lambda value: (item_display_name(value, items).lower(), value)):
+        item = item_info_for_class(item_class, items)
+        reason = raw_material_reason(item_class, item, output_classes)
+        if not reason:
+            continue
+        rows.append([item_class, item_display_name(item_class, items), reason])
+    return rows
+
+
+def raw_material_reason(item_class: str, item: ItemInfo | None, output_classes: set[str]) -> str:
+    if item and "FGResourceDescriptor" in item.native_class:
+        return RAW_REASON_RESOURCE_DESCRIPTOR
+    if item_class not in output_classes:
+        return RAW_REASON_NO_RECIPE_OUTPUT
+    return ""
+
+
+def item_info_for_class(item_class: str, items: dict[str, ItemInfo]) -> ItemInfo | None:
+    return items.get(item_class) or items.get(item_class.removesuffix("_C"))
+
+
+def item_display_name(item_class: str, items: dict[str, ItemInfo]) -> str:
+    item = item_info_for_class(item_class, items)
+    return item.display_name if item else humanize_class_name(item_class)
 
 
 def build_recipes_long_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
@@ -681,6 +946,7 @@ def build_version_rows(docs_path: Path, args: argparse.Namespace) -> list[list[A
         ["Output", str(args.out)],
         ["Lang", args.lang],
         ["RecipeFilter", "exclude extraction/raw-resource gathering recipes only"],
+        ["GeneratedPowerRecipes", True],
         ["WideOnly", args.wide_only],
         ["DebugJson", args.debug_json],
     ]
@@ -690,6 +956,7 @@ def build_validation_rows(recipes: Sequence[Recipe], items: Sequence[ItemInfo]) 
     no_inputs = sum(1 for recipe in recipes if not recipe.inputs)
     no_producers = sum(1 for recipe in recipes if not recipe.produced_in)
     alternate = sum(1 for recipe in recipes if recipe.is_alternate)
+    power_recipes = sum(1 for recipe in recipes if recipe.recipe_id.startswith("Recipe_Power_"))
     max_inputs = max((len(recipe.inputs) for recipe in recipes), default=0)
     max_outputs = max((len(recipe.outputs) for recipe in recipes), default=0)
     return [
@@ -697,6 +964,7 @@ def build_validation_rows(recipes: Sequence[Recipe], items: Sequence[ItemInfo]) 
         ["RecipeCount", len(recipes)],
         ["ItemCount", len(items)],
         ["AlternateRecipeCount", alternate],
+        ["PowerRecipeCount", power_recipes],
         ["RecipesWithoutInputs", no_inputs],
         ["RecipesWithoutProducedIn", no_producers],
         ["MaxInputCount", max_inputs],
@@ -744,6 +1012,7 @@ def write_debug_json(out_path: Path, recipes: Sequence[Recipe], items: dict[str,
                 "stack_size": item.stack_size,
                 "sink_points": item.sink_points,
                 "native_class": item.native_class,
+                "energy_value": item.energy_value,
             }
             for item in {info.class_name: info for info in items.values()}.values()
         },
@@ -986,6 +1255,12 @@ def normalized_amount(raw_amount: float, unit: str) -> float:
     if unit == "m3":
         return raw_amount / 1000.0
     return raw_amount
+
+
+def denormalized_amount(amount: float, unit: str) -> float:
+    if unit == "m3":
+        return amount * 1000.0
+    return amount
 
 
 def string_value(value: Any) -> str:
