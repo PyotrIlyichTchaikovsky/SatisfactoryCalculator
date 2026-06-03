@@ -22,7 +22,7 @@ from typing import Any, Iterable, Sequence
 from xml.sax.saxutils import escape
 
 
-SCRIPT_VERSION = "0.2.0"
+SCRIPT_VERSION = "0.3.2"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
 EXCEL_FILE_NAME = "Satisfactory_Recipes_Wide.xlsx"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -38,6 +38,9 @@ CLASS_PATH_RE = re.compile(r"'(?P<path>/[^']+)'")
 INVALID_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 SYNTHETIC_POWER_NATIVE_CLASS = "SyntheticPowerItem"
 SYNTHETIC_POWER_SOURCE_CLASS = "SyntheticGeneratorPowerRecipe"
+STYLE_DEFAULT = 0
+STYLE_INPUT = 1
+STYLE_OUTPUT = 2
 POWER_OUTPUT_BY_GENERATOR = {
     "Build_GeneratorBiomass_Automated_C": ("Desc_Power_Biomass_C", "Biomass Power"),
     "Build_GeneratorCoal_C": ("Desc_Power_Coal_C", "Coal Power"),
@@ -87,6 +90,27 @@ class Recipe:
     outputs: list[Ingredient] = field(default_factory=list)
     source_class: str = ""
     source_file: str = ""
+
+
+@dataclass(frozen=True)
+class MergeRange:
+    start_row: int
+    start_col: int
+    end_row: int
+    end_col: int
+
+
+@dataclass(frozen=True)
+class StyledCell:
+    value: Any
+    style: int = STYLE_DEFAULT
+
+
+@dataclass
+class Worksheet:
+    name: str
+    rows: list[list[Any]]
+    merges: list[MergeRange] = field(default_factory=list)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -716,26 +740,27 @@ def build_sheets(
     items: dict[str, ItemInfo],
     docs_path: Path,
     args: argparse.Namespace,
-) -> list[tuple[str, list[list[Any]]]]:
+) -> list[Worksheet]:
     wide_rows = build_recipes_wide_rows(recipes)
     if args.wide_only:
-        return [("RecipesWide", wide_rows)]
+        return [Worksheet("RecipesWide", wide_rows)]
 
     unique_items = sorted(
         {info.class_name: info for info in items.values()}.values(),
         key=lambda item: item.display_name.lower(),
     )
     sheets = [
-        ("README", build_readme_rows(recipes, items, docs_path, args)),
-        ("RecipesWide", wide_rows),
-        ("RecipeSummary", build_recipe_summary_rows(recipes)),
-        ("Items", build_items_rows(unique_items)),
-        ("RawMaterials", build_raw_material_rows(recipes, items)),
-        ("RecipesLong", build_recipes_long_rows(recipes)),
-        ("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
-        ("RecipeOutputs", build_recipe_io_rows(recipes, input_side=False)),
-        ("VersionInfo", build_version_rows(docs_path, args)),
-        ("Validation", build_validation_rows(recipes, unique_items)),
+        Worksheet("README", build_readme_rows(recipes, items, docs_path, args)),
+        Worksheet("RecipesWide", wide_rows),
+        Worksheet("RecipeSummary", build_recipe_summary_rows(recipes)),
+        build_replacement_group_sheet(recipes),
+        Worksheet("Items", build_items_rows(unique_items)),
+        Worksheet("RawMaterials", build_raw_material_rows(recipes, items)),
+        Worksheet("RecipesLong", build_recipes_long_rows(recipes)),
+        Worksheet("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
+        Worksheet("RecipeOutputs", build_recipe_io_rows(recipes, input_side=False)),
+        Worksheet("VersionInfo", build_version_rows(docs_path, args)),
+        Worksheet("Validation", build_validation_rows(recipes, unique_items)),
     ]
     return sheets
 
@@ -790,6 +815,89 @@ def build_recipe_summary_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
             ]
         )
     return rows
+
+
+def build_replacement_group_sheet(recipes: Sequence[Recipe]) -> Worksheet:
+    merges: list[MergeRange] = []
+    groups: dict[str, list[Recipe]] = {}
+
+    for recipe in recipes:
+        primary_output = primary_output_class(recipe)
+        if not primary_output:
+            continue
+        groups.setdefault(primary_output, []).append(recipe)
+
+    grouped_recipes = [
+        sorted(group, key=replacement_group_recipe_sort_key)
+        for group in groups.values()
+        if len(group) > 1
+    ]
+    grouped_recipes.sort(key=lambda group: (group[0].outputs[0].item_name.lower(), group[0].outputs[0].item_class))
+
+    grouped_recipe_values = [recipe for group in grouped_recipes for recipe in group]
+    max_inputs = max((len(recipe.inputs) for recipe in grouped_recipe_values), default=0)
+    max_outputs = max((len(recipe.outputs) for recipe in grouped_recipe_values), default=0)
+    rows: list[list[Any]] = [
+        [
+            "产出材料名称",
+            "配方名称",
+            *[StyledCell(f"消耗{index}", STYLE_INPUT) for index in range(1, max_inputs + 1)],
+            *[StyledCell(f"产出{index}", STYLE_OUTPUT) for index in range(1, max_outputs + 1)],
+        ]
+    ]
+
+    for group in grouped_recipes:
+        start_row = len(rows) + 1
+        output_name = group[0].outputs[0].item_name
+        for index, recipe in enumerate(group):
+            row: list[Any] = [
+                output_name if index == 0 else None,
+                recipe.recipe_name,
+            ]
+            for input_index in range(max_inputs):
+                row.append(
+                    StyledCell(ingredient_cell_text(recipe.inputs[input_index]), STYLE_INPUT)
+                    if input_index < len(recipe.inputs)
+                    else StyledCell("", STYLE_INPUT)
+                )
+            for output_index in range(max_outputs):
+                row.append(
+                    StyledCell(ingredient_cell_text(recipe.outputs[output_index]), STYLE_OUTPUT)
+                    if output_index < len(recipe.outputs)
+                    else StyledCell("", STYLE_OUTPUT)
+                )
+            rows.append(
+                row
+            )
+        end_row = len(rows)
+        if end_row > start_row:
+            merges.append(MergeRange(start_row, 1, end_row, 1))
+
+    return Worksheet("ReplacementGroup", rows, merges)
+
+
+def replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, str, str]:
+    return (1 if recipe.is_alternate else 0, recipe.recipe_name.lower(), recipe.recipe_id)
+
+
+def primary_output_class(recipe: Recipe) -> str:
+    if not recipe.outputs:
+        return ""
+    return recipe.outputs[0].item_class
+
+
+def format_recipe_formula(recipe: Recipe) -> str:
+    return f"{format_formula_side(recipe.inputs)} = {format_formula_side(recipe.outputs)}"
+
+
+def format_formula_side(items: Sequence[Ingredient]) -> str:
+    if not items:
+        return "无"
+    return " + ".join(ingredient_cell_text(item) for item in items)
+
+
+def ingredient_cell_text(item: Ingredient) -> str:
+    return f"{item.item_name}（{format_number(clean_number(item.per_min))}）"
 
 
 def build_readme_rows(
@@ -1032,7 +1140,7 @@ def ingredient_to_dict(item: Ingredient) -> dict[str, Any]:
     }
 
 
-def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[list[Any]]]]) -> None:
+def write_xlsx(path: Path, sheets: Sequence[Worksheet]) -> None:
     if not sheets:
         raise ExportError("no sheets to write")
 
@@ -1041,16 +1149,18 @@ def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[list[Any]]]]) -> Non
         workbook.writestr("[Content_Types].xml", content_types_xml(len(sheets)))
         workbook.writestr("_rels/.rels", package_rels_xml())
         workbook.writestr("docProps/core.xml", core_props_xml())
-        workbook.writestr("docProps/app.xml", app_props_xml([name for name, _rows in sheets]))
-        workbook.writestr("xl/workbook.xml", workbook_xml([name for name, _rows in sheets]))
+        workbook.writestr("docProps/app.xml", app_props_xml([sheet.name for sheet in sheets]))
+        workbook.writestr("xl/workbook.xml", workbook_xml([sheet.name for sheet in sheets]))
         workbook.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml(len(sheets)))
-        for index, (_name, rows) in enumerate(sheets, start=1):
-            workbook.writestr(f"xl/worksheets/sheet{index}.xml", worksheet_xml(rows))
+        workbook.writestr("xl/styles.xml", styles_xml())
+        for index, sheet in enumerate(sheets, start=1):
+            workbook.writestr(f"xl/worksheets/sheet{index}.xml", worksheet_xml(sheet.rows, sheet.merges))
 
 
 def content_types_xml(sheet_count: int) -> str:
     overrides = [
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>',
         '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>',
         '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>',
     ]
@@ -1126,19 +1236,48 @@ def workbook_xml(sheet_names: Sequence[str]) -> str:
 
 
 def workbook_rels_xml(sheet_count: int) -> str:
-    relationships = "".join(
+    relationships = [
         f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{index}.xml"/>'
         for index in range(1, sheet_count + 1)
+    ]
+    relationships.append(
+        f'<Relationship Id="rId{sheet_count + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
     )
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        + relationships
+        + "".join(relationships)
         + "</Relationships>"
     )
 
 
-def worksheet_xml(rows: Sequence[Sequence[Any]]) -> str:
+def styles_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts>'
+        '<fills count="4">'
+        '<fill><patternFill patternType="none"/></fill>'
+        '<fill><patternFill patternType="gray125"/></fill>'
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFFFE4E1"/><bgColor indexed="64"/></patternFill></fill>'
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFE2F0D9"/><bgColor indexed="64"/></patternFill></fill>'
+        '</fills>'
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        '<cellXfs count="3">'
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        '<xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/>'
+        '<xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/>'
+        '</cellXfs>'
+        '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+        '<dxfs count="0"/>'
+        '<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>'
+        '</styleSheet>'
+    )
+
+
+def worksheet_xml(rows: Sequence[Sequence[Any]], merges: Sequence[MergeRange] | None = None) -> str:
+    merges = list(merges or [])
     row_count = len(rows)
     col_count = max((len(row) for row in rows), default=1)
     dimension = f"A1:{column_name(col_count)}{max(row_count, 1)}"
@@ -1163,10 +1302,22 @@ def worksheet_xml(rows: Sequence[Sequence[Any]]) -> str:
             parts.append(cell_xml(row_index, col_index, value))
         parts.append("</row>")
     parts.append("</sheetData>")
-    if row_count > 1 and col_count > 0:
+    if row_count > 1 and col_count > 0 and not merges:
         parts.append(f'<autoFilter ref="A1:{column_name(col_count)}{row_count}"/>')
+    if merges:
+        parts.append(f'<mergeCells count="{len(merges)}">')
+        for merge in merges:
+            parts.append(f'<mergeCell ref="{merge_range_ref(merge)}"/>')
+        parts.append("</mergeCells>")
     parts.append("</worksheet>")
     return "".join(parts)
+
+
+def merge_range_ref(merge: MergeRange) -> str:
+    return (
+        f"{column_name(merge.start_col)}{merge.start_row}:"
+        f"{column_name(merge.end_col)}{merge.end_row}"
+    )
 
 
 def cols_xml(rows: Sequence[Sequence[Any]], col_count: int) -> str:
@@ -1178,7 +1329,7 @@ def cols_xml(rows: Sequence[Sequence[Any]], col_count: int) -> str:
         max_len = 8
         for row in sample:
             if col_index < len(row):
-                max_len = max(max_len, min(len(str(row[col_index])), 60))
+                max_len = max(max_len, min(len(str(cell_display_value(row[col_index]))), 60))
         widths.append(max(8, min(max_len + 2, 64)))
     return "<cols>" + "".join(
         f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'
@@ -1188,15 +1339,26 @@ def cols_xml(rows: Sequence[Sequence[Any]], col_count: int) -> str:
 
 def cell_xml(row_index: int, col_index: int, value: Any) -> str:
     ref = f"{column_name(col_index)}{row_index}"
+    style = STYLE_DEFAULT
+    if isinstance(value, StyledCell):
+        style = value.style
+        value = value.value
+    style_attr = f' s="{style}"' if style else ""
     if isinstance(value, bool):
-        return f'<c r="{ref}" t="b"><v>{1 if value else 0}</v></c>'
+        return f'<c r="{ref}"{style_attr} t="b"><v>{1 if value else 0}</v></c>'
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-            return f'<c r="{ref}" t="inlineStr"><is><t></t></is></c>'
-        return f'<c r="{ref}"><v>{format_number(value)}</v></c>'
+            return f'<c r="{ref}"{style_attr} t="inlineStr"><is><t></t></is></c>'
+        return f'<c r="{ref}"{style_attr}><v>{format_number(value)}</v></c>'
     text = xml_text(str(value))
     preserve = ' xml:space="preserve"' if text.strip() != text else ""
-    return f'<c r="{ref}" t="inlineStr"><is><t{preserve}>{text}</t></is></c>'
+    return f'<c r="{ref}"{style_attr} t="inlineStr"><is><t{preserve}>{text}</t></is></c>'
+
+
+def cell_display_value(value: Any) -> Any:
+    if isinstance(value, StyledCell):
+        return value.value
+    return value
 
 
 def column_name(index: int) -> str:
