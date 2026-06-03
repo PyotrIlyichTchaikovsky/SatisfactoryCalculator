@@ -515,6 +515,7 @@ def build_sheets(
     sheets = [
         ("README", build_readme_rows(recipes, items, docs_path, args)),
         ("RecipesWide", wide_rows),
+        ("RecipeSummary", build_recipe_summary_rows(recipes)),
         ("Items", build_items_rows(unique_items)),
         ("RecipesLong", build_recipes_long_rows(recipes)),
         ("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
@@ -561,6 +562,19 @@ def build_recipes_wide_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
             row.extend(io_wide_cells(recipe.outputs[index] if index < len(recipe.outputs) else None))
         row.extend([recipe.source_class, recipe.source_file])
         rows.append(row)
+    return rows
+
+
+def build_recipe_summary_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
+    rows = [["配方名字", "输入材料", "输出材料"]]
+    for recipe in recipes:
+        rows.append(
+            [
+                recipe.recipe_name,
+                format_summary_io_text(recipe.inputs),
+                format_summary_io_text(recipe.outputs),
+            ]
+        )
     return rows
 
 
@@ -698,6 +712,10 @@ def io_wide_cells(item: Ingredient | None) -> list[Any]:
 
 def format_io_text(items: Sequence[Ingredient]) -> str:
     return "; ".join(f"{format_number(item.amount)} {item.unit} {item.item_name}" for item in items)
+
+
+def format_summary_io_text(items: Sequence[Ingredient]) -> str:
+    return "|".join(f"{item.item_name}（{format_number(clean_number(item.per_min))}）" for item in items)
 
 
 def write_debug_json(out_path: Path, recipes: Sequence[Recipe], items: dict[str, ItemInfo], docs_path: Path) -> None:

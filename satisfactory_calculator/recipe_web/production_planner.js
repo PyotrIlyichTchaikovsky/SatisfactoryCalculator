@@ -12,15 +12,19 @@
   const disabledRecipesDropdown = document.getElementById("disabledRecipesDropdown");
   const disabledRecipeList = document.getElementById("disabledRecipeList");
   const disabledRecipeCount = document.getElementById("disabledRecipeCount");
+  const resetLayoutButton = document.getElementById("resetLayoutButton");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
+  const GRAPH_FLOW_WIDTH = 8;
 
   let items = [];
   const itemsByClass = new Map();
   const disabledRecipes = new Map();
+  const recipeNodePositions = new Map();
   let activeTab = "tree";
   let savedState = loadPlannerState();
   let suppressStateSave = false;
+  let activeGraphDrag = null;
 
   addTargetButton.addEventListener("click", () => addTargetRow());
   plannerForm.addEventListener("submit", (event) => {
@@ -30,8 +34,10 @@
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
+  resetLayoutButton?.addEventListener("click", resetGraphLayout);
 
   restoreDisabledRecipes(savedState.disabledRecipes);
+  restoreRecipeNodePositions(savedState.recipeNodePositions);
   renderDisabledRecipes();
   loadInitialData();
 
@@ -123,6 +129,11 @@
     const state = {
       targets: collectTargetState(),
       disabledRecipes: Array.from(disabledRecipes.values()),
+      recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
+        id,
+        x: roundGraphCoordinate(position.x),
+        y: roundGraphCoordinate(position.y),
+      })),
     };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -210,6 +221,41 @@
       const name = String(typeof entry === "string" ? entry : entry?.name || id).trim() || id;
       disabledRecipes.set(id, { id, name });
     });
+  }
+
+  function restoreRecipeNodePositions(positionEntries) {
+    recipeNodePositions.clear();
+
+    if (Array.isArray(positionEntries)) {
+      positionEntries.forEach((entry) => {
+        const id = String(entry?.id || "").trim();
+        const x = Number(entry?.x);
+        const y = Number(entry?.y);
+        if (id && Number.isFinite(x) && Number.isFinite(y)) {
+          recipeNodePositions.set(id, { x, y });
+        }
+      });
+      return;
+    }
+
+    if (positionEntries && typeof positionEntries === "object") {
+      Object.entries(positionEntries).forEach(([id, value]) => {
+        const x = Number(value?.x);
+        const y = Number(value?.y);
+        if (id && Number.isFinite(x) && Number.isFinite(y)) {
+          recipeNodePositions.set(id, { x, y });
+        }
+      });
+    }
+  }
+
+  function resetGraphLayout() {
+    if (!recipeNodePositions.size) {
+      return;
+    }
+    recipeNodePositions.clear();
+    savePlannerState();
+    recalculateIfTargetsExist();
   }
 
   function renderDisabledRecipes() {
@@ -562,6 +608,7 @@
         title: raw.item.name,
         meta: `${formatNumber(rate)} ${raw.item.unit}/min`,
         item: raw.item,
+        edgeColor: "rgb(45, 126, 192)",
       });
       addEndpoint(producersByMaterial, raw.item.className, {
         nodeId: node.id,
@@ -572,6 +619,7 @@
     });
 
     recipeRuns.forEach((run) => {
+      const color = recipeColor(run.recipe.name);
       const node = addGraphNode(nodes, {
         id: run.id,
         type: "recipe",
@@ -580,6 +628,9 @@
         meta: `x ${formatNumber(run.scale)}`,
         alternate: Boolean(run.recipe.isAlternate),
         recipe: run.recipe,
+        fillColor: color.fill,
+        borderColor: color.border,
+        edgeColor: color.edge,
       });
 
       (run.outputs || []).forEach((output) => {
@@ -730,11 +781,11 @@
       minHeight: 560,
     };
     assignDependencyColumns(nodes, edges);
-    const maxRate = Math.max(1, ...edges.map((edge) => Number(edge.rate) || 0));
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
 
     edges.forEach((edge) => {
-      edge.width = flowWidth(edge.rate, maxRate);
+      edge.width = GRAPH_FLOW_WIDTH;
+      edge.color = edgeColor(edge, nodeById);
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
       edge.feedback = Boolean(source && target && source.column >= target.column);
@@ -762,13 +813,53 @@
         node.height = constants.nodeHeight;
       });
     });
+    applySavedRecipeNodePositions(nodes);
 
     const maxColumn = Math.max(0, ...sortedColumns);
-    const width = constants.marginX * 2 + constants.nodeWidth + maxColumn * (constants.nodeWidth + constants.columnGap);
-    const height = Math.max(constants.minHeight, constants.marginY * 2 + maxColumnHeight);
+    const autoWidth = constants.marginX * 2 + constants.nodeWidth + maxColumn * (constants.nodeWidth + constants.columnGap);
+    const autoHeight = Math.max(constants.minHeight, constants.marginY * 2 + maxColumnHeight);
+    const { width, height } = graphExtents(nodes, autoWidth, autoHeight);
 
+    refreshEdgeFeedback(edges, nodeById);
     routeEdges(edges, nodeById);
-    return { nodes, width, height };
+    return { nodes, width, height, nodeById };
+  }
+
+  function applySavedRecipeNodePositions(nodes) {
+    nodes.forEach((node) => {
+      if (node.type !== "recipe") {
+        return;
+      }
+      const position = recipeNodePositions.get(node.id);
+      if (!position) {
+        return;
+      }
+      const x = Number(position.x);
+      const y = Number(position.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        node.x = Math.max(0, x);
+        node.y = Math.max(0, y);
+      }
+    });
+  }
+
+  function graphExtents(nodes, minWidth, minHeight) {
+    const padding = 56;
+    const maxRight = Math.max(0, ...nodes.map((node) => Number(node.x) + Number(node.width) + padding));
+    const maxBottom = Math.max(0, ...nodes.map((node) => Number(node.y) + Number(node.height) + padding));
+    return {
+      width: Math.ceil(Math.max(minWidth, maxRight)),
+      height: Math.ceil(Math.max(minHeight, maxBottom)),
+    };
+  }
+
+  function refreshEdgeFeedback(edges, nodeById) {
+    edges.forEach((edge) => {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      edge.feedback = Boolean(source && target && source.x >= target.x);
+      edge.pathElement?.setAttribute("class", `graph-flow${edge.feedback ? " feedback" : ""}`);
+    });
   }
 
   function assignDependencyColumns(nodes, edges) {
@@ -966,8 +1057,7 @@
       edge.y1 = source.y + source.height / 2 + edge.sourceOffset;
       edge.x2 = target.x;
       edge.y2 = target.y + target.height / 2 + edge.targetOffset;
-      edge.labelX = (edge.x1 + edge.x2) / 2;
-      edge.labelY = (edge.y1 + edge.y2) / 2;
+      positionEdgeLabel(edge);
     });
   }
 
@@ -990,12 +1080,16 @@
     canvas.className = "graph-canvas";
     canvas.style.width = `${graph.width}px`;
     canvas.style.height = `${graph.height}px`;
+    graph.canvas = canvas;
 
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("class", "graph-svg");
     svg.setAttribute("width", String(graph.width));
     svg.setAttribute("height", String(graph.height));
     svg.setAttribute("viewBox", `0 0 ${graph.width} ${graph.height}`);
+    graph.svg = svg;
+    graph.baseWidth = graph.width;
+    graph.baseHeight = graph.height;
 
     graph.edges.forEach((edge) => {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1003,26 +1097,37 @@
       path.setAttribute("d", edgePath(edge));
       path.setAttribute("stroke", edge.color);
       path.setAttribute("stroke-width", String(edge.width));
+      edge.pathElement = path;
       svg.appendChild(path);
     });
     canvas.appendChild(svg);
 
     graph.edges.forEach((edge) => {
       if (!edge.x1 && !edge.x2) return;
-      canvas.appendChild(renderEdgeLabel(edge));
+      const label = renderEdgeLabel(edge);
+      edge.labelElement = label;
+      canvas.appendChild(label);
     });
 
     graph.nodes.forEach((node) => {
-      canvas.appendChild(renderGraphNode(node, graph.balanceByClass));
+      const element = renderGraphNode(node, graph);
+      node.element = element;
+      canvas.appendChild(element);
     });
 
     viewport.appendChild(canvas);
     return viewport;
   }
 
-  function renderGraphNode(node, balanceByClass) {
+  function renderGraphNode(node, graph) {
     const card = document.createElement("article");
     card.className = `graph-node ${node.type}${node.alternate ? " alternate" : ""}`;
+    card.dataset.nodeId = node.id;
+    card.draggable = false;
+    card.addEventListener("dragstart", (event) => event.preventDefault());
+    if (node.type === "recipe") {
+      card.classList.add("draggable");
+    }
     if (node.type === "recipe" && node.alternate && node.recipe?.id) {
       card.classList.add("has-disable-button");
     }
@@ -1030,6 +1135,12 @@
     card.style.top = `${node.y}px`;
     card.style.width = `${node.width}px`;
     card.style.height = `${node.height}px`;
+    if (node.fillColor) {
+      card.style.background = node.fillColor;
+    }
+    if (node.borderColor) {
+      card.style.borderColor = node.borderColor;
+    }
 
     if (node.type === "recipe" && node.alternate && node.recipe?.id) {
       const disableButton = document.createElement("button");
@@ -1045,9 +1156,22 @@
       card.appendChild(disableButton);
     }
 
+    if (node.type === "recipe") {
+      const handle = document.createElement("div");
+      handle.className = "graph-drag-handle";
+      handle.textContent = "拖动";
+      handle.title = "按住拖动配方节点";
+      bindGraphDragStart(handle, node, graph);
+      card.appendChild(handle);
+    }
+
     const kind = document.createElement("div");
     kind.className = "graph-node-kind";
     kind.textContent = graphNodeKindText(node);
+    if (node.type === "recipe") {
+      kind.title = "按住这里拖动配方节点";
+      bindGraphDragStart(kind, node, graph);
+    }
 
     const title = document.createElement("div");
     title.className = "graph-node-title";
@@ -1059,7 +1183,7 @@
 
     card.append(kind, title, meta);
 
-    const balance = node.item ? balanceByClass.get(node.item.className) : null;
+    const balance = node.item ? graph.balanceByClass.get(node.item.className) : null;
     if (node.alternate || node.type === "surplus" || (balance && isPositive(Number(balance.surplus)))) {
       const badges = document.createElement("div");
       badges.className = "graph-node-badges";
@@ -1074,6 +1198,169 @@
     return card;
   }
 
+  function bindGraphDragStart(element, node, graph) {
+    element.classList.add("graph-drag-zone");
+    element.addEventListener("pointerdown", (event) => startGraphNodeDrag(event, node, graph));
+    element.addEventListener("mousedown", (event) => startGraphNodeDrag(event, node, graph));
+    element.addEventListener("touchstart", (event) => startGraphNodeDrag(event, node, graph), { passive: false });
+  }
+
+  function startGraphNodeDrag(event, node, graph) {
+    const target = event.target;
+    if (activeGraphDrag || (target instanceof Element && target.closest("button"))) {
+      return;
+    }
+    if (typeof event.button === "number" && event.button !== 0) {
+      return;
+    }
+    const startPoint = graphDragPoint(event);
+    if (!startPoint) {
+      return;
+    }
+
+    event.preventDefault();
+    const card = node.element || event.currentTarget;
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    const startClientX = startPoint.clientX;
+    const startClientY = startPoint.clientY;
+    const startNodeX = node.x;
+    const startNodeY = node.y;
+    let moved = false;
+    const eventNames = graphDragEventNames(event.type);
+
+    activeGraphDrag = { node, graph };
+    card.classList.add("dragging");
+    if (event.type === "pointerdown") {
+      try {
+        card.setPointerCapture?.(event.pointerId);
+      } catch (_error) {
+        // Some browsers can reject capture if the pointer is already gone.
+      }
+    }
+
+    const handleMove = (moveEvent) => {
+      const point = graphDragPoint(moveEvent);
+      if (!point) {
+        return;
+      }
+      moveEvent.preventDefault();
+      const nextX = Math.max(0, startNodeX + point.clientX - startClientX);
+      const nextY = Math.max(0, startNodeY + point.clientY - startClientY);
+      if (Math.abs(nextX - node.x) < 0.5 && Math.abs(nextY - node.y) < 0.5) {
+        return;
+      }
+      moved = true;
+      node.x = nextX;
+      node.y = nextY;
+      updateGraphNodeElement(node);
+      refreshRenderedGraph(graph);
+    };
+
+    const stopDrag = (stopEvent) => {
+      eventNames.move.forEach((name) => window.removeEventListener(name, handleMove, true));
+      eventNames.end.forEach((name) => window.removeEventListener(name, stopDrag, true));
+      if (event.type === "pointerdown") {
+        try {
+          card.releasePointerCapture?.(stopEvent.pointerId);
+        } catch (_error) {
+          // Capture may already have been released by the browser.
+        }
+      }
+      card.classList.remove("dragging");
+      activeGraphDrag = null;
+
+      if (moved) {
+        recipeNodePositions.set(node.id, {
+          x: roundGraphCoordinate(node.x),
+          y: roundGraphCoordinate(node.y),
+        });
+        savePlannerState();
+      }
+    };
+
+    eventNames.move.forEach((name) => window.addEventListener(name, handleMove, { capture: true, passive: false }));
+    eventNames.end.forEach((name) => window.addEventListener(name, stopDrag, true));
+  }
+
+  function graphDragEventNames(startType) {
+    if (startType === "touchstart") {
+      return {
+        move: ["touchmove"],
+        end: ["touchend", "touchcancel"],
+      };
+    }
+    if (startType === "mousedown") {
+      return {
+        move: ["mousemove"],
+        end: ["mouseup"],
+      };
+    }
+    return {
+      move: ["pointermove", "mousemove", "touchmove"],
+      end: ["pointerup", "pointercancel", "mouseup", "touchend", "touchcancel"],
+    };
+  }
+
+  function graphDragPoint(event) {
+    if (event.touches?.length) {
+      return {
+        clientX: event.touches[0].clientX,
+        clientY: event.touches[0].clientY,
+      };
+    }
+    if (event.changedTouches?.length) {
+      return {
+        clientX: event.changedTouches[0].clientX,
+        clientY: event.changedTouches[0].clientY,
+      };
+    }
+    if (typeof event.clientX === "number" && typeof event.clientY === "number") {
+      return {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+    }
+    return null;
+  }
+
+  function updateGraphNodeElement(node) {
+    if (!node.element) {
+      return;
+    }
+    node.element.style.left = `${node.x}px`;
+    node.element.style.top = `${node.y}px`;
+  }
+
+  function refreshRenderedGraph(graph) {
+    resizeGraphCanvas(graph);
+    refreshEdgeFeedback(graph.edges, graph.nodeById);
+    routeEdges(graph.edges, graph.nodeById);
+    graph.edges.forEach((edge) => {
+      edge.pathElement?.setAttribute("d", edgePath(edge));
+      if (edge.labelElement) {
+        edge.labelElement.style.left = `${edge.labelX}px`;
+        edge.labelElement.style.top = `${edge.labelY}px`;
+      }
+    });
+  }
+
+  function resizeGraphCanvas(graph) {
+    const { width, height } = graphExtents(graph.nodes, graph.baseWidth, graph.baseHeight);
+    if (width === graph.width && height === graph.height) {
+      return;
+    }
+
+    graph.width = width;
+    graph.height = height;
+    graph.canvas.style.width = `${width}px`;
+    graph.canvas.style.height = `${height}px`;
+    graph.svg.setAttribute("width", String(width));
+    graph.svg.setAttribute("height", String(height));
+    graph.svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  }
+
   function renderEdgeLabel(edge) {
     const label = document.createElement("div");
     label.className = "graph-edge-label";
@@ -1084,13 +1371,57 @@
     return label;
   }
 
-  function edgePath(edge) {
+  function positionEdgeLabel(edge) {
+    const point = edgePoint(edge, 0.5);
+    edge.labelX = point.x;
+    edge.labelY = point.y + (edge.feedback ? -12 : 0);
+  }
+
+  function edgePoint(edge, t) {
+    const control = edgeControlPoints(edge);
+    return cubicPoint(
+      { x: edge.x1, y: edge.y1 },
+      control.c1,
+      control.c2,
+      { x: edge.x2, y: edge.y2 },
+      t,
+    );
+  }
+
+  function edgeControlPoints(edge) {
     const distance = Math.abs(edge.x2 - edge.x1);
     const curve = Math.max(80, Math.min(220, distance * 0.45));
     if (edge.feedback) {
-      return `M ${edge.x1} ${edge.y1} C ${edge.x1 + 90} ${edge.y1 - 90}, ${edge.x2 - 90} ${edge.y2 - 90}, ${edge.x2} ${edge.y2}`;
+      const backtrack = Math.max(0, edge.x1 - edge.x2);
+      const horizontal = Math.max(120, Math.min(260, backtrack * 0.22 + 120));
+      const direction = edge.y2 >= edge.y1 ? 1 : -1;
+      const vertical = Math.min(46, Math.abs(edge.y2 - edge.y1) * 0.12 + 18);
+      return {
+        c1: { x: edge.x1 + horizontal, y: edge.y1 + direction * vertical },
+        c2: { x: edge.x2 - horizontal, y: edge.y2 - direction * vertical },
+      };
     }
-    return `M ${edge.x1} ${edge.y1} C ${edge.x1 + curve} ${edge.y1}, ${edge.x2 - curve} ${edge.y2}, ${edge.x2} ${edge.y2}`;
+    return {
+      c1: { x: edge.x1 + curve, y: edge.y1 },
+      c2: { x: edge.x2 - curve, y: edge.y2 },
+    };
+  }
+
+  function cubicPoint(p0, p1, p2, p3, t) {
+    const u = 1 - t;
+    const tt = t * t;
+    const uu = u * u;
+    const uuu = uu * u;
+    const ttt = tt * t;
+    return {
+      x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+      y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+    };
+  }
+
+  function edgePath(edge) {
+    const control = edgeControlPoints(edge);
+    return `M ${edge.x1} ${edge.y1} C ${control.c1.x} ${control.c1.y}, ${control.c2.x} ${control.c2.y}, ${edge.x2} ${edge.y2}`;
   }
 
   function graphNodeKindText(node) {
@@ -1107,9 +1438,71 @@
     return `${typeOrder[node.type] || "9"}:${priority}:${node.title.toLowerCase()}:${node.id}`;
   }
 
-  function flowWidth(rate, maxRate) {
-    const normalized = Math.sqrt(Math.max(0, Number(rate)) / maxRate);
-    return Math.max(4, Math.min(34, normalized * 30));
+  function edgeColor(edge, nodeById) {
+    const source = nodeById.get(edge.source);
+    return source?.edgeColor || source?.borderColor || materialColor(edge.item?.className || edge.source);
+  }
+
+  function recipeColor(recipeName) {
+    const hash = hashString(recipeName);
+    const hue = hash % 360;
+    const saturation = 38 + ((hash >>> 8) % 10);
+    const lightness = 29 + ((hash >>> 16) % 7);
+    const fill = hslToRgb(hue, saturation, lightness);
+    const border = hslToRgb(hue, Math.min(58, saturation + 10), Math.min(56, lightness + 18));
+    const edge = hslToRgb(hue, Math.min(62, saturation + 14), Math.min(50, lightness + 12));
+    return {
+      fill: `rgba(${fill.r}, ${fill.g}, ${fill.b}, 0.94)`,
+      border: `rgb(${border.r}, ${border.g}, ${border.b})`,
+      edge: `rgb(${edge.r}, ${edge.g}, ${edge.b})`,
+    };
+  }
+
+  function hslToRgb(hue, saturation, lightness) {
+    const s = saturation / 100;
+    const l = lightness / 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const h = hue / 60;
+    const x = c * (1 - Math.abs((h % 2) - 1));
+    let r1 = 0;
+    let g1 = 0;
+    let b1 = 0;
+
+    if (h >= 0 && h < 1) {
+      r1 = c;
+      g1 = x;
+    } else if (h < 2) {
+      r1 = x;
+      g1 = c;
+    } else if (h < 3) {
+      g1 = c;
+      b1 = x;
+    } else if (h < 4) {
+      g1 = x;
+      b1 = c;
+    } else if (h < 5) {
+      r1 = x;
+      b1 = c;
+    } else {
+      r1 = c;
+      b1 = x;
+    }
+
+    const m = l - c / 2;
+    return {
+      r: Math.round((r1 + m) * 255),
+      g: Math.round((g1 + m) * 255),
+      b: Math.round((b1 + m) * 255),
+    };
+  }
+
+  function hashString(value) {
+    let hash = 2166136261;
+    for (const char of String(value || "")) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
   }
 
   function materialColor(itemClass) {
@@ -1245,5 +1638,10 @@
 
   function formatInteger(value) {
     return Number(value || 0).toLocaleString("en-US");
+  }
+
+  function roundGraphCoordinate(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number) : 0;
   }
 })();

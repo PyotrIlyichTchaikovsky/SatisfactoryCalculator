@@ -372,6 +372,10 @@ h2 {
   background: #edf3f5;
 }
 
+.compact-button {
+  white-space: nowrap;
+}
+
 .remove-button {
   width: 76px;
   padding: 0;
@@ -450,14 +454,14 @@ h2 {
 
 .graph-flow {
   fill: none;
-  stroke-linecap: butt;
-  stroke-opacity: 0.46;
+  stroke-linecap: round;
+  stroke-opacity: 0.52;
   mix-blend-mode: screen;
 }
 
 .graph-flow.feedback {
   stroke-dasharray: 10 7;
-  stroke-opacity: 0.36;
+  stroke-opacity: 0.48;
 }
 
 .graph-edge-label {
@@ -498,6 +502,45 @@ h2 {
   padding-right: 28px;
 }
 
+.graph-node.recipe.draggable .graph-node-kind,
+.graph-node.recipe.draggable .graph-node-title {
+  padding-left: 42px;
+}
+
+.graph-drag-handle {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 36px;
+  height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  padding: 0 7px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.88);
+  cursor: grab;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 20px;
+  text-align: center;
+  user-select: none;
+}
+
+.graph-drag-zone {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.graph-node.dragging .graph-drag-handle {
+  cursor: grabbing;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.graph-node.dragging .graph-drag-zone {
+  cursor: grabbing;
+}
+
 .disable-recipe-button {
   position: absolute;
   top: 6px;
@@ -524,6 +567,17 @@ h2 {
 .graph-node.recipe {
   border-color: #2fa84f;
   background: rgba(28, 110, 39, 0.92);
+}
+
+.graph-node.recipe.draggable {
+  cursor: text;
+  user-select: text;
+}
+
+.graph-node.recipe.dragging {
+  z-index: 25;
+  cursor: grabbing;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.34);
 }
 
 .graph-node.recipe.alternate {
@@ -672,6 +726,10 @@ h2 {
 
   .result-actions {
     justify-content: stretch;
+  }
+
+  .compact-button {
+    width: 100%;
   }
 
   .disabled-recipes-dropdown,

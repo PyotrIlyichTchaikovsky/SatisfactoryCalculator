@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Satisfactory 生产规划</title>
-  <link rel="stylesheet" href="production_planner.css">
-  <script defer src="production_planner.js"></script>
+  <link rel="stylesheet" href="production_planner.css?v=graph-style-20260604-1">
+  <script defer src="production_planner.js?v=graph-style-20260604-1"></script>
 </head>
 <body>
   <header class="app-header">
@@ -34,6 +34,7 @@
       <div class="result-toolbar">
         <h2 id="resultHeading">结果</h2>
         <div class="result-actions">
+          <button id="resetLayoutButton" class="secondary-button compact-button" type="button">重置布局</button>
           <details id="disabledRecipesDropdown" class="disabled-recipes-dropdown">
             <summary>禁用配方 <span id="disabledRecipeCount">0</span></summary>
             <div id="disabledRecipeList" class="disabled-recipe-list"></div>
