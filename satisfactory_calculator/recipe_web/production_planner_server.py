@@ -39,7 +39,7 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
             payload = self._read_json_body()
             result = self.planner.plan(
                 payload.get("targets", []),
-                payload.get("disabledRecipeIds", []),
+                payload.get("selectedRecipes", {}),
             )
         except PlannerError as exc:
             self._send_json({"error": str(exc)}, status=400)

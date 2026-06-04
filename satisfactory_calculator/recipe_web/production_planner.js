@@ -9,17 +9,15 @@
   const statusMessage = document.getElementById("statusMessage");
   const treeView = document.getElementById("treeView");
   const tableView = document.getElementById("tableView");
-  const disabledRecipesDropdown = document.getElementById("disabledRecipesDropdown");
-  const disabledRecipeList = document.getElementById("disabledRecipeList");
-  const disabledRecipeCount = document.getElementById("disabledRecipeCount");
   const resetLayoutButton = document.getElementById("resetLayoutButton");
+  const resetRecipeSelectionsButton = document.getElementById("resetRecipeSelectionsButton");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
   const GRAPH_FLOW_WIDTH = 8;
 
   let items = [];
   const itemsByClass = new Map();
-  const disabledRecipes = new Map();
+  const recipeSelections = new Map();
   const recipeNodePositions = new Map();
   let activeTab = "tree";
   let savedState = loadPlannerState();
@@ -35,10 +33,10 @@
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
+  resetRecipeSelectionsButton?.addEventListener("click", resetRecipeSelections);
 
-  restoreDisabledRecipes(savedState.disabledRecipes);
+  restoreRecipeSelections(savedState.recipeSelections);
   restoreRecipeNodePositions(savedState.recipeNodePositions);
-  renderDisabledRecipes();
   loadInitialData();
 
   async function loadInitialData() {
@@ -51,13 +49,13 @@
         addTargetRow(null, "", { focus: false, save: false });
       }
       dataSummary.textContent = summaryText(summary);
-      setStatus("已从服务端加载 Excel 配方数据。请选择一个或多个物品，并输入每分钟需要生产的数量。", false);
+      setStatus("Loaded Excel recipe data from server. Select items and enter rates per minute.", false);
     } catch (error) {
       if (!targetRows.querySelector(".target-row")) {
         addTargetRow(null, "", { focus: false, save: false });
       }
       dataSummary.textContent = "无法连接生产规划服务";
-      setStatus(`无法加载服务端数据：${error.message}。请通过 python recipe_web/production_planner_server.py 启动服务后访问页面。`, true);
+      setStatus(`Failed to load server data: ${error.message}. Start recipe_web/production_planner_server.py and reload.`, true);
     }
   }
 
@@ -78,9 +76,10 @@
             itemClass: target.item.className,
             rate: target.rate,
           })),
-          disabledRecipeIds: Array.from(disabledRecipes.keys()),
+          selectedRecipes: selectedRecipesPayload(),
         }),
       });
+      reconcileRecipeSelections(result);
       renderGraphView(result);
       renderMergedTable(result.totals || []);
       selectTab("tree");
@@ -89,13 +88,13 @@
       const recipeRunCount = result.summary?.recipeRunCount ?? 0;
       const objectiveValue = result.summary?.objectiveValue ?? 0;
       setStatus(
-        `已优化 ${formatInteger(targetCount)} 个生产目标，使用 ${formatInteger(recipeRunCount)} 个配方，外部原材料消耗 ${formatNumber(objectiveValue)} /min，合并得到 ${formatInteger(totalRows)} 行材料。`,
+        `Optimized ${formatInteger(targetCount)} target(s), using ${formatInteger(recipeRunCount)} recipe(s), external raw input ${formatNumber(objectiveValue)} /min, merged into ${formatInteger(totalRows)} material row(s).`,
         false,
       );
     } catch (error) {
-      setStatus(`计算失败：${error.message}`, true);
-      treeView.replaceChildren(makeEmptyMessage("当前条件下没有可显示的生产方案。"));
-      tableView.replaceChildren(makeEmptyMessage("当前条件下没有可显示的合并表格。"));
+      setStatus(`Calculation failed: ${error.message}`, true);
+      treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
+      tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
     }
   }
 
@@ -128,7 +127,7 @@
     }
     const state = {
       targets: collectTargetState(),
-      disabledRecipes: Array.from(disabledRecipes.values()),
+      recipeSelections: Array.from(recipeSelections.values()),
       recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
         id,
         x: roundGraphCoordinate(position.x),
@@ -207,20 +206,72 @@
     return items.find((item) => compact(item.name) === compactName) || null;
   }
 
-  function restoreDisabledRecipes(disabledRecipeEntries) {
-    disabledRecipes.clear();
-    if (!Array.isArray(disabledRecipeEntries)) {
+  function restoreRecipeSelections(selectionEntries) {
+    recipeSelections.clear();
+    if (Array.isArray(selectionEntries)) {
+      selectionEntries.forEach((entry) => {
+        const itemClass = String(entry?.itemClass || "").trim();
+        const recipeId = String(entry?.recipeId || "").trim();
+        if (itemClass && recipeId) {
+          recipeSelections.set(itemClass, {
+            itemClass,
+            itemName: String(entry?.itemName || itemClass),
+            recipeId,
+            recipeName: String(entry?.recipeName || recipeId),
+          });
+        }
+      });
       return;
     }
 
-    disabledRecipeEntries.forEach((entry) => {
-      const id = String(typeof entry === "string" ? entry : entry?.id || "").trim();
-      if (!id) {
+    if (selectionEntries && typeof selectionEntries === "object") {
+      Object.entries(selectionEntries).forEach(([itemClass, recipeId]) => {
+        const cleanItemClass = String(itemClass || "").trim();
+        const cleanRecipeId = String(recipeId || "").trim();
+        if (cleanItemClass && cleanRecipeId) {
+          recipeSelections.set(cleanItemClass, {
+            itemClass: cleanItemClass,
+            itemName: cleanItemClass,
+            recipeId: cleanRecipeId,
+            recipeName: cleanRecipeId,
+          });
+        }
+      });
+    }
+  }
+
+  function selectedRecipesPayload() {
+    return Object.fromEntries(
+      Array.from(recipeSelections.values()).map((selection) => [selection.itemClass, selection.recipeId]),
+    );
+  }
+
+  function reconcileRecipeSelections(result) {
+    const effectiveSelections = result?.selectedRecipes;
+    if (!effectiveSelections || typeof effectiveSelections !== "object" || !recipeSelections.size) {
+      return;
+    }
+
+    let changed = false;
+    recipeSelections.forEach((selection, itemClass) => {
+      const effectiveRecipeId = String(effectiveSelections[itemClass] || "").trim();
+      if (!effectiveRecipeId) {
+        recipeSelections.delete(itemClass);
+        changed = true;
         return;
       }
-      const name = String(typeof entry === "string" ? entry : entry?.name || id).trim() || id;
-      disabledRecipes.set(id, { id, name });
+      if (effectiveRecipeId !== selection.recipeId) {
+        recipeSelections.set(itemClass, {
+          ...selection,
+          recipeId: effectiveRecipeId,
+        });
+        changed = true;
+      }
     });
+
+    if (changed) {
+      savePlannerState();
+    }
   }
 
   function restoreRecipeNodePositions(positionEntries) {
@@ -258,59 +309,27 @@
     recalculateIfTargetsExist();
   }
 
-  function renderDisabledRecipes() {
-    if (!disabledRecipeList || !disabledRecipeCount) {
+  function resetRecipeSelections() {
+    if (!recipeSelections.size) {
       return;
     }
-
-    disabledRecipeCount.textContent = formatInteger(disabledRecipes.size);
-    disabledRecipeList.replaceChildren();
-    disabledRecipesDropdown?.classList.toggle("empty", disabledRecipes.size === 0);
-
-    if (!disabledRecipes.size) {
-      const empty = document.createElement("div");
-      empty.className = "disabled-recipe-empty";
-      empty.textContent = "没有禁用的替代配方";
-      disabledRecipeList.appendChild(empty);
-      return;
-    }
-
-    const entries = Array.from(disabledRecipes.values()).sort((a, b) => a.name.localeCompare(b.name));
-    entries.forEach((recipe) => {
-      const row = document.createElement("div");
-      row.className = "disabled-recipe-row";
-
-      const name = document.createElement("span");
-      name.className = "disabled-recipe-name";
-      name.textContent = recipe.name;
-
-      const restoreButton = document.createElement("button");
-      restoreButton.type = "button";
-      restoreButton.className = "restore-recipe-button";
-      restoreButton.textContent = "恢复";
-      restoreButton.addEventListener("click", () => restoreRecipe(recipe.id));
-
-      row.append(name, restoreButton);
-      disabledRecipeList.appendChild(row);
-    });
-  }
-
-  function disableRecipe(recipe) {
-    if (!recipe?.id) {
-      return;
-    }
-    disabledRecipes.set(recipe.id, {
-      id: recipe.id,
-      name: recipe.name || recipe.id,
-    });
-    renderDisabledRecipes();
+    recipeSelections.clear();
     savePlannerState();
     recalculateIfTargetsExist();
   }
 
-  function restoreRecipe(recipeId) {
-    disabledRecipes.delete(recipeId);
-    renderDisabledRecipes();
+  function selectRecipeForOutput(recipe, option) {
+    const primaryOutput = recipe?.primaryOutput;
+    const recipeId = String(option?.id || "").trim();
+    if (!primaryOutput?.className || !recipeId) {
+      return;
+    }
+    recipeSelections.set(primaryOutput.className, {
+      itemClass: primaryOutput.className,
+      itemName: primaryOutput.name || primaryOutput.className,
+      recipeId,
+      recipeName: option.name || recipeId,
+    });
     savePlannerState();
     recalculateIfTargetsExist();
   }
@@ -1128,8 +1147,8 @@
     if (node.type === "recipe") {
       card.classList.add("draggable");
     }
-    if (node.type === "recipe" && node.alternate && node.recipe?.id) {
-      card.classList.add("has-disable-button");
+    if (node.type === "recipe" && canSwitchRecipe(node.recipe)) {
+      card.classList.add("has-switch-button");
     }
     card.style.left = `${node.x}px`;
     card.style.top = `${node.y}px`;
@@ -1142,18 +1161,18 @@
       card.style.borderColor = node.borderColor;
     }
 
-    if (node.type === "recipe" && node.alternate && node.recipe?.id) {
-      const disableButton = document.createElement("button");
-      disableButton.type = "button";
-      disableButton.className = "disable-recipe-button";
-      disableButton.textContent = "X";
-      disableButton.title = "临时禁用这个替代配方";
-      disableButton.setAttribute("aria-label", `临时禁用 ${node.recipe.name || node.title}`);
-      disableButton.addEventListener("click", (event) => {
+    if (node.type === "recipe" && canSwitchRecipe(node.recipe)) {
+      const switchButton = document.createElement("button");
+      switchButton.type = "button";
+      switchButton.className = "switch-recipe-button";
+      switchButton.textContent = "\u6362";
+      switchButton.title = "Switch the recipe used for this material";
+      switchButton.setAttribute("aria-label", `Switch recipe for ${node.recipe.primaryOutput?.name || node.recipe.name || node.title}`);
+      switchButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        disableRecipe(node.recipe);
+        openRecipeSwitchDialog(node.recipe);
       });
-      card.appendChild(disableButton);
+      card.appendChild(switchButton);
     }
 
     if (node.type === "recipe") {
@@ -1196,6 +1215,97 @@
     }
 
     return card;
+  }
+
+  function canSwitchRecipe(recipe) {
+    return Boolean(
+      recipe?.primaryOutput?.className
+        && Array.isArray(recipe.replacementOptions)
+        && recipe.replacementOptions.length > 1,
+    );
+  }
+
+  function openRecipeSwitchDialog(recipe) {
+    if (!canSwitchRecipe(recipe)) {
+      return;
+    }
+    closeRecipeSwitchDialog();
+
+    const overlay = document.createElement("div");
+    overlay.className = "recipe-switch-overlay";
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        closeRecipeSwitchDialog();
+      }
+    });
+
+    const dialog = document.createElement("section");
+    dialog.className = "recipe-switch-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+
+    const header = document.createElement("div");
+    header.className = "recipe-switch-header";
+
+    const title = document.createElement("h3");
+    title.textContent = `Switch recipe for ${recipe.primaryOutput.name || recipe.primaryOutput.className}`;
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "recipe-switch-close";
+    closeButton.textContent = "\u00d7";
+    closeButton.setAttribute("aria-label", "Close");
+    closeButton.addEventListener("click", closeRecipeSwitchDialog);
+
+    header.append(title, closeButton);
+    dialog.appendChild(header);
+
+    const list = document.createElement("div");
+    list.className = "recipe-switch-list";
+    recipe.replacementOptions.forEach((option) => {
+      const optionButton = document.createElement("button");
+      optionButton.type = "button";
+      optionButton.className = `recipe-switch-option${option.id === recipe.id ? " current" : ""}`;
+      if (option.id === recipe.id) {
+        optionButton.disabled = true;
+      }
+
+      const name = document.createElement("span");
+      name.className = "recipe-switch-name";
+      name.textContent = option.name || option.id;
+
+      const formula = document.createElement("span");
+      formula.className = "recipe-switch-formula";
+      formula.textContent = recipeOptionFormula(option);
+
+      optionButton.append(name, formula);
+      optionButton.addEventListener("click", () => {
+        closeRecipeSwitchDialog();
+        selectRecipeForOutput(recipe, option);
+      });
+      list.appendChild(optionButton);
+    });
+    dialog.appendChild(list);
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+  }
+
+  function closeRecipeSwitchDialog() {
+    document.querySelector(".recipe-switch-overlay")?.remove();
+  }
+
+  function recipeOptionFormula(option) {
+    return `${recipeOptionSide(option.inputs)} = ${recipeOptionSide(option.outputs)}`;
+  }
+
+  function recipeOptionSide(items) {
+    if (!Array.isArray(items) || !items.length) {
+      return "None";
+    }
+    return items
+      .map((item) => `${item.item?.name || ""} (${formatNumber(item.rate)})`)
+      .join(" + ");
   }
 
   function bindGraphDragStart(element, node, graph) {

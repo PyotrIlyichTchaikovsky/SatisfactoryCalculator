@@ -68,6 +68,13 @@ class RecipeChoice:
 
 
 @dataclass(frozen=True)
+class ReplacementGroup:
+    item_class: str
+    item_name: str
+    recipe_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _ItemInfo:
     class_name: str
     display_name: str
@@ -83,13 +90,27 @@ class ProductionPlanner:
         items: dict[str, Item],
         recipes: tuple[Recipe, ...],
         raw_source_classes: set[str],
+        replacement_groups: tuple[ReplacementGroup, ...],
         version_info: dict[str, Any],
     ) -> None:
         self.excel_path = excel_path
         self.items = items
         self.recipes = recipes
+        self.recipes_by_id = {recipe.recipe_id: recipe for recipe in recipes}
         self.version_info = version_info
         self.recipes_by_output = self._build_recipes_by_output(recipes)
+        self.replacement_groups = replacement_groups
+        self.replacement_groups_by_item = {group.item_class: group for group in replacement_groups}
+        self.primary_output_by_recipe = {
+            recipe.recipe_id: recipe.outputs[0].item_class
+            for recipe in recipes
+            if recipe.outputs
+        }
+        self.replacement_group_by_recipe = {
+            recipe_id: group
+            for group in replacement_groups
+            for recipe_id in group.recipe_ids
+        }
         self.output_classes = {
             output.item_class
             for recipe in recipes
@@ -116,12 +137,13 @@ class ProductionPlanner:
         outputs_by_recipe, output_item_names = _load_recipe_io(sheets["RecipeOutputs"])
         recipes = _load_recipes(sheets["RecipesLong"], inputs_by_recipe, outputs_by_recipe)
         version_info = _load_key_value_sheet(sheets.get("VersionInfo", []))
+        replacement_groups = _load_replacement_groups(sheets.get("ReplacementGroup", []), recipes)
 
         used_classes = set(input_item_names) | set(output_item_names)
         producible_classes = set(output_item_names)
         item_names = {**input_item_names, **output_item_names}
         items = _build_items(used_classes, producible_classes, item_names, item_infos)
-        return cls(path, items, recipes, raw_source_classes, version_info)
+        return cls(path, items, recipes, raw_source_classes, replacement_groups, version_info)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -139,18 +161,19 @@ class ProductionPlanner:
     def plan(
         self,
         targets: Iterable[dict[str, Any]],
-        disabled_recipe_ids: Iterable[Any] | None = None,
+        selected_recipes: Any | None = None,
     ) -> dict[str, Any]:
         parsed_targets = self._parse_targets(targets)
-        disabled_ids = self._parse_disabled_recipe_ids(disabled_recipe_ids)
-        solution = self._solve_linear_plan(parsed_targets, disabled_ids)
+        recipe_selection_overrides = self._parse_recipe_selections(selected_recipes)
+        active_recipe_ids, effective_selections = self._active_recipe_selection(recipe_selection_overrides)
+        solution = self._solve_linear_plan(parsed_targets, active_recipe_ids)
 
         return {
             "targets": [
                 {"item": self._item_to_dict(target["item"]), "rate": target["rate"]}
                 for target in parsed_targets
             ],
-            "disabledRecipeIds": sorted(disabled_ids),
+            "selectedRecipes": effective_selections,
             "roots": solution["layers"],
             "layers": solution["layers"],
             "recipeRuns": solution["recipeRuns"],
@@ -163,22 +186,35 @@ class ProductionPlanner:
                 "totalRows": len(solution["totals"]),
                 "objectiveValue": solution["objectiveValue"],
                 "secondaryObjectiveValue": solution["secondaryObjectiveValue"],
-                "disabledRecipeCount": len(disabled_ids),
+                "selectedRecipeCount": len(recipe_selection_overrides),
             },
         }
 
-    def _parse_disabled_recipe_ids(self, disabled_recipe_ids: Iterable[Any] | None) -> set[str]:
-        if disabled_recipe_ids is None:
-            return set()
-        if isinstance(disabled_recipe_ids, (str, bytes)) or not isinstance(disabled_recipe_ids, Iterable):
-            raise PlannerError("disabledRecipeIds must be an array.")
-        valid_ids = {recipe.recipe_id for recipe in self.recipes}
-        return {
-            recipe_id
-            for value in disabled_recipe_ids
-            for recipe_id in [str(value or "").strip()]
-            if recipe_id and recipe_id in valid_ids
-        }
+    def _parse_recipe_selections(self, selected_recipes: Any | None) -> dict[str, str]:
+        if selected_recipes is None:
+            return {}
+        if not isinstance(selected_recipes, dict):
+            raise PlannerError("selectedRecipes must be an object keyed by item class.")
+
+        selections: dict[str, str] = {}
+        for raw_item_class, raw_recipe_id in selected_recipes.items():
+            item_class = str(raw_item_class or "").strip()
+            recipe_id = str(raw_recipe_id or "").strip()
+            group = self.replacement_groups_by_item.get(item_class)
+            if group and recipe_id in group.recipe_ids:
+                selections[item_class] = recipe_id
+        return selections
+
+    def _active_recipe_selection(self, selected_recipes: dict[str, str]) -> tuple[set[str], dict[str, str]]:
+        active_recipe_ids: set[str] = set()
+        effective_selections: dict[str, str] = {}
+        for group in self.replacement_groups:
+            selected_recipe_id = selected_recipes.get(group.item_class) or group.recipe_ids[0]
+            if selected_recipe_id not in group.recipe_ids:
+                selected_recipe_id = group.recipe_ids[0]
+            active_recipe_ids.add(selected_recipe_id)
+            effective_selections[group.item_class] = selected_recipe_id
+        return active_recipe_ids, effective_selections
 
     def _parse_targets(self, targets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         parsed: list[dict[str, Any]] = []
@@ -214,7 +250,7 @@ class ProductionPlanner:
     def _solve_linear_plan(
         self,
         parsed_targets: list[dict[str, Any]],
-        disabled_recipe_ids: set[str],
+        active_recipe_ids: set[str],
     ) -> dict[str, Any]:
         if linprog is None:
             raise PlannerError(
@@ -224,7 +260,7 @@ class ProductionPlanner:
             )
 
         candidate_recipes = tuple(
-            recipe for recipe in self.recipes if recipe.recipe_id not in disabled_recipe_ids
+            recipe for recipe in self.recipes if recipe.recipe_id in active_recipe_ids
         )
         material_classes = self._plan_material_classes(parsed_targets, candidate_recipes)
         raw_classes = sorted(self.raw_source_classes & set(material_classes))
@@ -549,12 +585,39 @@ class ProductionPlanner:
         }
 
     def _recipe_to_dict(self, recipe: Recipe) -> dict[str, Any]:
+        primary_output = recipe.outputs[0] if recipe.outputs else None
+        primary_item_class = primary_output.item_class if primary_output else ""
+        group = self.replacement_group_by_recipe.get(recipe.recipe_id)
+        group_recipe_ids = group.recipe_ids if group else (recipe.recipe_id,)
         return {
             "id": recipe.recipe_id,
             "name": recipe.name,
             "isAlternate": recipe.is_alternate,
             "producedIn": list(recipe.produced_in),
             "durationSec": _clean_number(recipe.duration_sec),
+            "primaryOutput": self._item_to_dict(self._item_for_class(primary_item_class)) if primary_item_class else None,
+            "defaultRecipeId": group_recipe_ids[0] if group_recipe_ids else recipe.recipe_id,
+            "replacementOptions": [
+                self._recipe_option_to_dict(self.recipes_by_id[recipe_id])
+                for recipe_id in group_recipe_ids
+                if recipe_id in self.recipes_by_id
+            ],
+        }
+
+    def _recipe_option_to_dict(self, recipe: Recipe) -> dict[str, Any]:
+        return {
+            "id": recipe.recipe_id,
+            "name": recipe.name,
+            "isAlternate": recipe.is_alternate,
+            "inputs": [self._ingredient_to_option_dict(item) for item in recipe.inputs],
+            "outputs": [self._ingredient_to_option_dict(item) for item in recipe.outputs],
+        }
+
+    def _ingredient_to_option_dict(self, ingredient: Ingredient) -> dict[str, Any]:
+        return {
+            "item": self._item_to_dict(self._item_for_class(ingredient.item_class)),
+            "rate": _clean_number(ingredient.per_min),
+            "unit": ingredient.unit,
         }
 
     def _build_recipes_by_output(self, recipes: tuple[Recipe, ...]) -> dict[str, list[RecipeChoice]]:
@@ -751,6 +814,58 @@ def _load_recipes(
             )
         )
     return tuple(recipes)
+
+
+def _load_replacement_groups(rows: list[list[Any]], recipes: tuple[Recipe, ...]) -> tuple[ReplacementGroup, ...]:
+    sheet_order = _replacement_sheet_recipe_order(rows)
+    groups: dict[str, list[Recipe]] = defaultdict(list)
+    for recipe in recipes:
+        if recipe.outputs:
+            groups[recipe.outputs[0].item_class].append(recipe)
+
+    result: list[ReplacementGroup] = []
+    for item_class, group_recipes in groups.items():
+        if not group_recipes:
+            continue
+        output = group_recipes[0].outputs[0]
+        order_by_name = {
+            recipe_name: index
+            for index, recipe_name in enumerate(sheet_order.get(output.item_name, []))
+        }
+        sorted_recipes = sorted(
+            group_recipes,
+            key=lambda recipe: (
+                order_by_name.get(recipe.name, len(order_by_name)),
+                _replacement_group_recipe_sort_key(recipe),
+            ),
+        )
+        result.append(
+            ReplacementGroup(
+                item_class=item_class,
+                item_name=output.item_name,
+                recipe_ids=tuple(recipe.recipe_id for recipe in sorted_recipes),
+            )
+        )
+
+    result.sort(key=lambda group: (group.item_name.lower(), group.item_class))
+    return tuple(result)
+
+
+def _replacement_sheet_recipe_order(rows: list[list[Any]]) -> dict[str, list[str]]:
+    order: dict[str, list[str]] = defaultdict(list)
+    current_output_name = ""
+    for row in _dict_rows(rows):
+        output_name = _text(row.get("产出材料名称"))
+        if output_name:
+            current_output_name = output_name
+        recipe_name = _text(row.get("配方名称"))
+        if current_output_name and recipe_name:
+            order[current_output_name].append(recipe_name)
+    return dict(order)
+
+
+def _replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, str, str]:
+    return (1 if recipe.is_alternate else 0, recipe.name.lower(), recipe.recipe_id)
 
 
 def _load_key_value_sheet(rows: list[list[Any]]) -> dict[str, Any]:

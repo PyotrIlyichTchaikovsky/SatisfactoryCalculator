@@ -22,7 +22,7 @@ from typing import Any, Iterable, Sequence
 from xml.sax.saxutils import escape
 
 
-SCRIPT_VERSION = "0.3.2"
+SCRIPT_VERSION = "0.3.3"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
 EXCEL_FILE_NAME = "Satisfactory_Recipes_Wide.xlsx"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -51,6 +51,11 @@ POWER_OUTPUT_BY_GENERATOR = {
 SUPPLEMENTAL_RATE_PER_MIN = {
     ("Build_GeneratorCoal_C", "Desc_Water_C"): 45.0,
     ("Build_GeneratorNuclear_C", "Desc_Water_C"): 240.0,
+}
+NUCLEAR_FUEL_REPLACEMENT_ORDER = {
+    "Desc_NuclearFuelRod_C": 0,
+    "Desc_PlutoniumFuelRod_C": 1,
+    "Desc_FicsoniumFuelRod_C": 2,
 }
 RAW_REASON_RESOURCE_DESCRIPTOR = "游戏资源描述符（NativeClass 包含 FGResourceDescriptor）"
 RAW_REASON_NO_RECIPE_OUTPUT = "没有非采集配方产出（RecipeOutputs 中不存在该物品）"
@@ -876,8 +881,21 @@ def build_replacement_group_sheet(recipes: Sequence[Recipe]) -> Worksheet:
     return Worksheet("ReplacementGroup", rows, merges)
 
 
-def replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, str, str]:
-    return (1 if recipe.is_alternate else 0, recipe.recipe_name.lower(), recipe.recipe_id)
+def replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, int, str, str]:
+    return (
+        1 if recipe.is_alternate else 0,
+        nuclear_fuel_replacement_rank(recipe),
+        recipe.recipe_name.lower(),
+        recipe.recipe_id,
+    )
+
+
+def nuclear_fuel_replacement_rank(recipe: Recipe) -> int:
+    prefix = "Recipe_Power_Build_GeneratorNuclear_C_"
+    if not recipe.recipe_id.startswith(prefix):
+        return 999
+    fuel_class = recipe.recipe_id.removeprefix(prefix)
+    return NUCLEAR_FUEL_REPLACEMENT_ORDER.get(fuel_class, 999)
 
 
 def primary_output_class(recipe: Recipe) -> str:
