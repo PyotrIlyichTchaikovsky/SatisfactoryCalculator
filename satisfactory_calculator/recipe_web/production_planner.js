@@ -14,6 +14,8 @@
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
   const GRAPH_FLOW_WIDTH = 8;
+  const GRAPH_VIEWPORT_MIN_HEIGHT = 360;
+  const GRAPH_VIEWPORT_BOTTOM_GAP = 18;
   const RECIPE_MODE_BASE = "base";
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
 
@@ -26,6 +28,10 @@
   let savedState = loadPlannerState();
   let suppressStateSave = false;
   let activeGraphDrag = null;
+  let activeGraphPan = null;
+  let lastServerResult = null;
+  let lastServerTargets = [];
+  let lastServerRecipeSelectionSignature = "";
 
   addTargetButton.addEventListener("click", () => addTargetRow());
   plannerForm.addEventListener("submit", (event) => {
@@ -37,6 +43,7 @@
   });
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
   recipePresetSelect?.addEventListener("change", () => applyRecipePreset(recipePresetSelect.value));
+  window.addEventListener("resize", handleWindowResize);
 
   restoreRecipeSelections(savedState.recipeSelections);
   restoreRecipeNodePositions(savedState.recipeNodePositions);
@@ -70,6 +77,7 @@
     savePlannerState();
 
     setStatus("正在请求服务端计算...", false);
+    const requestRecipeMode = pendingRecipeMode;
     try {
       const result = await fetchJson("/api/plan", {
         method: "POST",
@@ -80,13 +88,14 @@
             rate: target.rate,
           })),
           selectedRecipes: selectedRecipesPayload(),
-          recipeMode: pendingRecipeMode,
+          recipeMode: requestRecipeMode,
         }),
       });
-      reconcileRecipeSelections(result, { captureAll: pendingRecipeMode === RECIPE_MODE_BEST_EFFICIENCY });
-      renderGraphView(result);
-      renderMergedTable(result.totals || []);
-      selectTab("tree");
+      reconcileRecipeSelections(result, { captureAll: requestRecipeMode === RECIPE_MODE_BEST_EFFICIENCY });
+      lastServerResult = clonePlannerResult(result);
+      lastServerTargets = targetSnapshotsFromTargets(targets);
+      lastServerRecipeSelectionSignature = recipeSelectionSignature();
+      renderPlannerResult(result, { selectTree: true });
       const targetCount = result.summary?.targetCount ?? targets.length;
       const totalRows = result.summary?.totalRows ?? 0;
       const recipeRunCount = result.summary?.recipeRunCount ?? 0;
@@ -96,6 +105,9 @@
         false,
       );
     } catch (error) {
+      lastServerResult = null;
+      lastServerTargets = [];
+      lastServerRecipeSelectionSignature = "";
       setStatus(`Calculation failed: ${error.message}`, true);
       treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
       tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
@@ -119,6 +131,14 @@
       throw new Error(payload?.error || `${response.status} ${response.statusText}`);
     }
     return payload || {};
+  }
+
+  function renderPlannerResult(result, options = {}) {
+    renderGraphView(result, { preserveViewport: Boolean(options.preserveGraphViewport) });
+    renderMergedTable(result.totals || []);
+    if (options.selectTree) {
+      selectTab("tree");
+    }
   }
 
   function loadPlannerState() {
@@ -405,7 +425,7 @@
       renderSuggestions(row, itemInput.value);
       savePlannerState();
     });
-    amountInput.addEventListener("input", savePlannerState);
+    amountInput.addEventListener("input", handleTargetAmountInput);
     itemInput.addEventListener("focus", () => renderSuggestions(row, itemInput.value));
     itemInput.addEventListener("keydown", (event) => handleSuggestionKeys(event, row));
     itemInput.addEventListener("blur", () => {
@@ -611,6 +631,165 @@
     return targets;
   }
 
+  function handleTargetAmountInput() {
+    savePlannerState();
+    tryRenderScaledResultFromInputs();
+  }
+
+  function tryRenderScaledResultFromInputs() {
+    const targets = targetSnapshotsFromRows();
+    if (!targets) {
+      return false;
+    }
+    return tryRenderScaledResultForSnapshots(targets, { updateStatus: true });
+  }
+
+  function tryRenderScaledResultForSnapshots(currentTargets, options = {}) {
+    if (!lastServerResult || pendingRecipeMode !== RECIPE_MODE_BASE) {
+      return false;
+    }
+    if (recipeSelectionSignature() !== lastServerRecipeSelectionSignature) {
+      return false;
+    }
+
+    const scaleFactor = targetScaleFactor(lastServerTargets, currentTargets);
+    if (!Number.isFinite(scaleFactor) || scaleFactor <= 0) {
+      return false;
+    }
+
+    const scaledResult = scaledPlannerResult(lastServerResult, scaleFactor, currentTargets);
+    renderPlannerResult(scaledResult, { preserveGraphViewport: true });
+    if (options.updateStatus) {
+      setStatus(`已按 ${formatNumber(scaleFactor)}x 同比缩放当前结果，未重新请求服务器。`, false);
+    }
+    return true;
+  }
+
+  function targetSnapshotsFromTargets(targets) {
+    return (targets || []).map((target) => ({
+      itemClass: target.item.className,
+      itemName: target.item.name,
+      rate: Number(target.rate),
+    }));
+  }
+
+  function targetSnapshotsFromRows() {
+    const snapshots = [];
+    for (const row of Array.from(targetRows.querySelectorAll(".target-row"))) {
+      const itemName = row.querySelector(".item-input").value.trim();
+      const rawRate = row.querySelector(".amount-input").value.trim();
+      if (!itemName && !rawRate) {
+        continue;
+      }
+
+      const itemClass = String(row.dataset.itemClass || "").trim();
+      const item = itemClass ? itemsByClass.get(itemClass) : null;
+      const rate = Number(rawRate);
+      if (!item || !Number.isFinite(rate) || rate <= 0) {
+        return null;
+      }
+      snapshots.push({
+        itemClass: item.className,
+        itemName: item.name,
+        rate,
+      });
+    }
+    return snapshots.length ? snapshots : null;
+  }
+
+  function targetScaleFactor(originalTargets, currentTargets) {
+    if (!Array.isArray(originalTargets) || !Array.isArray(currentTargets)) {
+      return NaN;
+    }
+    if (!originalTargets.length || originalTargets.length !== currentTargets.length) {
+      return NaN;
+    }
+
+    const ratios = [];
+    for (let index = 0; index < originalTargets.length; index += 1) {
+      const original = originalTargets[index];
+      const current = currentTargets[index];
+      if (original.itemClass !== current.itemClass || !Number.isFinite(original.rate) || original.rate <= 0) {
+        return NaN;
+      }
+      ratios.push(current.rate / original.rate);
+    }
+
+    const firstRatio = ratios[0];
+    const tolerance = Math.max(1e-7, Math.abs(firstRatio) * 1e-7);
+    return ratios.every((ratio) => Math.abs(ratio - firstRatio) <= tolerance) ? firstRatio : NaN;
+  }
+
+  function scaledPlannerResult(baseResult, scaleFactor, currentTargets) {
+    const result = clonePlannerResult(baseResult);
+    scaleResultRates(result, scaleFactor);
+    if (Array.isArray(result.targets)) {
+      result.targets.forEach((target, index) => {
+        if (currentTargets[index]) {
+          target.rate = currentTargets[index].rate;
+        }
+      });
+    }
+    return result;
+  }
+
+  function scaleResultRates(result, scaleFactor) {
+    (result.recipeRuns || []).forEach((run) => scaleRecipeRun(run, scaleFactor));
+    (result.materialBalances || []).forEach((balance) => {
+      ["produced", "consumed", "external", "targetDemand", "surplus"].forEach((key) => {
+        scaleNumberProperty(balance, key, scaleFactor);
+      });
+    });
+    (result.rawTotals || []).forEach((raw) => scaleNumberProperty(raw, "rate", scaleFactor));
+    (result.totals || []).forEach((row) => scaleNumberProperty(row, "rate", scaleFactor));
+    (result.layers || []).forEach((layer) => {
+      (layer.recipeRuns || []).forEach((run) => scaleRecipeRun(run, scaleFactor));
+      (layer.rawItems || []).forEach((raw) => scaleNumberProperty(raw, "rate", scaleFactor));
+    });
+    if (result.summary) {
+      scaleNumberProperty(result.summary, "objectiveValue", scaleFactor);
+      scaleNumberProperty(result.summary, "secondaryObjectiveValue", scaleFactor);
+    }
+  }
+
+  function scaleRecipeRun(run, scaleFactor) {
+    scaleNumberProperty(run, "scale", scaleFactor);
+    (run.inputs || []).forEach((item) => scaleNumberProperty(item, "rate", scaleFactor));
+    (run.outputs || []).forEach((item) => scaleNumberProperty(item, "rate", scaleFactor));
+  }
+
+  function scaleNumberProperty(object, key, scaleFactor) {
+    if (!object || !(key in object)) {
+      return;
+    }
+    const number = Number(object[key]);
+    if (!Number.isFinite(number)) {
+      return;
+    }
+    object[key] = roundedScaledNumber(number * scaleFactor);
+  }
+
+  function roundedScaledNumber(value) {
+    if (!Number.isFinite(value)) {
+      return value;
+    }
+    if (Math.abs(value) < 1e-10) {
+      return 0;
+    }
+    return Number(value.toPrecision(12));
+  }
+
+  function clonePlannerResult(result) {
+    return JSON.parse(JSON.stringify(result || {}));
+  }
+
+  function recipeSelectionSignature() {
+    return Array.from(recipeSelections.entries())
+      .map(([itemClass, selection]) => `${itemClass}:${selection.recipeId}`)
+      .sort()
+      .join("|");
+  }
+
   function selectedRowItem(row) {
     const selectedClass = row.dataset.itemClass;
     if (selectedClass && itemsByClass.has(selectedClass)) {
@@ -636,14 +815,58 @@
     return null;
   }
 
-  function renderGraphView(result) {
+  function renderGraphView(result, options = {}) {
     const graph = buildFlowGraph(result);
     if (!graph.nodes.length) {
       treeView.replaceChildren(makeEmptyMessage("尚未计算生产目标。"));
       return;
     }
 
-    treeView.replaceChildren(renderFlowGraph(graph));
+    const scrollState = options.preserveViewport ? graphViewportScrollState() : null;
+    const viewport = renderFlowGraph(graph);
+    treeView.replaceChildren(viewport);
+    fitGraphViewportHeight(viewport);
+    restoreGraphViewportScroll(viewport, scrollState);
+  }
+
+  function graphViewportScrollState() {
+    const viewport = treeView.querySelector(".graph-viewport");
+    if (!(viewport instanceof HTMLElement)) {
+      return null;
+    }
+    return {
+      left: viewport.scrollLeft,
+      top: viewport.scrollTop,
+    };
+  }
+
+  function restoreGraphViewportScroll(viewport, scrollState) {
+    if (!scrollState) {
+      return;
+    }
+    viewport.scrollLeft = scrollState.left;
+    viewport.scrollTop = scrollState.top;
+  }
+
+  function fitCurrentGraphViewportHeight() {
+    const viewport = treeView.querySelector(".graph-viewport");
+    if (viewport instanceof HTMLElement) {
+      fitGraphViewportHeight(viewport);
+    }
+  }
+
+  function fitGraphViewportHeight(viewport) {
+    if (treeView.classList.contains("hidden")) {
+      return;
+    }
+    const rect = viewport.getBoundingClientRect();
+    const availableHeight = window.innerHeight - rect.top - GRAPH_VIEWPORT_BOTTOM_GAP;
+    const height = Math.max(GRAPH_VIEWPORT_MIN_HEIGHT, Math.floor(availableHeight));
+    viewport.style.height = `${height}px`;
+  }
+
+  function handleWindowResize() {
+    fitCurrentGraphViewportHeight();
   }
 
   function buildFlowGraph(result) {
@@ -1176,6 +1399,7 @@
     });
 
     viewport.appendChild(canvas);
+    bindGraphPan(viewport);
     return viewport;
   }
 
@@ -1349,6 +1573,69 @@
       .join(" + ");
   }
 
+  function bindGraphPan(viewport) {
+    viewport.addEventListener("pointerdown", (event) => startGraphPan(event, viewport));
+  }
+
+  function startGraphPan(event, viewport) {
+    if (activeGraphDrag || activeGraphPan) {
+      return;
+    }
+    if (typeof event.button === "number" && event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest(".graph-node, .graph-edge-label, button, input, select, textarea, a")) {
+      return;
+    }
+
+    event.preventDefault();
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const startScrollLeft = viewport.scrollLeft;
+    const startScrollTop = viewport.scrollTop;
+    let moved = false;
+    activeGraphPan = { viewport };
+    viewport.classList.add("panning");
+
+    try {
+      viewport.setPointerCapture?.(event.pointerId);
+    } catch (_error) {
+      // Pointer capture can fail if the browser already canceled the pointer.
+    }
+
+    const handleMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      const deltaX = moveEvent.clientX - startClientX;
+      const deltaY = moveEvent.clientY - startClientY;
+      if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+        moved = true;
+      }
+      viewport.scrollLeft = startScrollLeft - deltaX;
+      viewport.scrollTop = startScrollTop - deltaY;
+    };
+
+    const stopPan = (stopEvent) => {
+      window.removeEventListener("pointermove", handleMove, true);
+      window.removeEventListener("pointerup", stopPan, true);
+      window.removeEventListener("pointercancel", stopPan, true);
+      try {
+        viewport.releasePointerCapture?.(stopEvent.pointerId);
+      } catch (_error) {
+        // Capture may already be released by the browser.
+      }
+      viewport.classList.remove("panning");
+      activeGraphPan = null;
+      if (moved) {
+        stopEvent.preventDefault();
+      }
+    };
+
+    window.addEventListener("pointermove", handleMove, { capture: true, passive: false });
+    window.addEventListener("pointerup", stopPan, true);
+    window.addEventListener("pointercancel", stopPan, true);
+  }
+
   function bindGraphDragStart(element, node, graph) {
     element.classList.add("graph-drag-zone");
     element.addEventListener("pointerdown", (event) => startGraphNodeDrag(event, node, graph));
@@ -1358,7 +1645,7 @@
 
   function startGraphNodeDrag(event, node, graph) {
     const target = event.target;
-    if (activeGraphDrag || (target instanceof Element && target.closest("button"))) {
+    if (activeGraphDrag || activeGraphPan || (target instanceof Element && target.closest("button"))) {
       return;
     }
     if (typeof event.button === "number" && event.button !== 0) {
@@ -1757,6 +2044,9 @@
       button.classList.toggle("active", selected);
       button.setAttribute("aria-selected", String(selected));
     });
+    if (showTree) {
+      fitCurrentGraphViewportHeight();
+    }
   }
 
   function setStatus(text, isError) {

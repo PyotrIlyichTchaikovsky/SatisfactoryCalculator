@@ -363,12 +363,19 @@ h2 {
 
 .graph-viewport {
   overflow: auto;
-  min-height: 560px;
+  min-height: 360px;
   border: 1px solid #1d2a34;
   border-radius: 10px;
   background:
     radial-gradient(circle at 20% 20%, rgba(48, 80, 96, 0.32), transparent 34%),
     linear-gradient(180deg, #232a30 0%, #1e252b 100%);
+  cursor: grab;
+  touch-action: none;
+}
+
+.graph-viewport.panning {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .graph-canvas {
@@ -771,7 +778,7 @@ h2 {
   }
 
   .graph-viewport {
-    min-height: 520px;
+    min-height: 360px;
   }
 
 }
