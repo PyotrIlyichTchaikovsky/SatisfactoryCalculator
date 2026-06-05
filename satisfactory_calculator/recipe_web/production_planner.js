@@ -981,7 +981,7 @@
       });
     });
 
-    const edges = allocateGraphEdges(producersByMaterial, consumersByMaterial);
+    const edges = allocateGraphEdges(producersByMaterial, consumersByMaterial, nodes);
     const laidOut = layoutFlowGraph(Array.from(nodes.values()), edges, balanceByClass);
     return {
       ...laidOut,
@@ -1021,18 +1021,20 @@
     map.get(itemClass).push(endpoint);
   }
 
-  function allocateGraphEdges(producersByMaterial, consumersByMaterial) {
+  function allocateGraphEdges(producersByMaterial, consumersByMaterial, nodes) {
     const edges = [];
+    const dependencyInfo = buildRecipeDependencyInfo(producersByMaterial, consumersByMaterial, nodes);
     const materialClasses = new Set([...producersByMaterial.keys(), ...consumersByMaterial.keys()]);
     materialClasses.forEach((itemClass) => {
-      const producers = (producersByMaterial.get(itemClass) || []).map((entry) => ({ ...entry }));
-      const consumers = (consumersByMaterial.get(itemClass) || []).map((entry) => ({ ...entry }));
-      let producerIndex = 0;
-      let consumerIndex = 0;
+      const producers = (producersByMaterial.get(itemClass) || []).map((entry, order) => ({ ...entry, order }));
+      const consumers = (consumersByMaterial.get(itemClass) || []).map((entry, order) => ({ ...entry, order }));
 
-      while (producerIndex < producers.length && consumerIndex < consumers.length) {
-        const producer = producers[producerIndex];
-        const consumer = consumers[consumerIndex];
+      while (true) {
+        const candidate = bestGraphEdgeAllocationCandidate(producers, consumers, nodes, dependencyInfo);
+        if (!candidate) {
+          break;
+        }
+        const { producer, consumer } = candidate;
         const rate = Math.min(producer.remaining, consumer.remaining);
 
         if (isPositive(rate) && producer.nodeId !== consumer.nodeId) {
@@ -1049,11 +1051,173 @@
 
         producer.remaining -= rate;
         consumer.remaining -= rate;
-        if (!isPositive(producer.remaining)) producerIndex += 1;
-        if (!isPositive(consumer.remaining)) consumerIndex += 1;
       }
     });
     return edges;
+  }
+
+  function bestGraphEdgeAllocationCandidate(producers, consumers, nodes, dependencyInfo) {
+    let best = null;
+    producers.forEach((producer) => {
+      if (!isPositive(Number(producer.remaining))) {
+        return;
+      }
+      consumers.forEach((consumer) => {
+        if (!isPositive(Number(consumer.remaining))) {
+          return;
+        }
+        const cost = graphEdgeAllocationCost(producer, consumer, nodes, dependencyInfo);
+        const rate = Math.min(Number(producer.remaining), Number(consumer.remaining));
+        const candidate = {
+          producer,
+          consumer,
+          cost,
+          rate,
+          orderScore: Number(producer.order || 0) + Number(consumer.order || 0),
+        };
+        if (!best || compareGraphEdgeAllocationCandidate(candidate, best) < 0) {
+          best = candidate;
+        }
+      });
+    });
+    return best;
+  }
+
+  function compareGraphEdgeAllocationCandidate(left, right) {
+    if (left.cost !== right.cost) {
+      return left.cost - right.cost;
+    }
+    if (left.rate !== right.rate) {
+      return right.rate - left.rate;
+    }
+    if (left.orderScore !== right.orderScore) {
+      return left.orderScore - right.orderScore;
+    }
+    if (left.producer.order !== right.producer.order) {
+      return left.producer.order - right.producer.order;
+    }
+    return left.consumer.order - right.consumer.order;
+  }
+
+  function graphEdgeAllocationCost(producer, consumer, nodes, dependencyInfo) {
+    const source = nodes.get(producer.nodeId);
+    const target = nodes.get(consumer.nodeId);
+    if (!source || !target) {
+      return 100000;
+    }
+    if (source.id === target.id) {
+      return -100000;
+    }
+
+    const layerGap = Math.abs(Number(source.column || 0) - Number(target.column || 0));
+    const sourceIsRecipe = source.type === "recipe";
+    const targetIsRecipe = target.type === "recipe";
+    const targetIsSurplus = target.type === "surplus";
+    const targetIsFinal = target.type === "target";
+    if (targetIsSurplus) {
+      return 9000 + layerGap;
+    }
+
+    if (sourceIsRecipe && producer.byproduct) {
+      if (targetIsRecipe) {
+        const upstreamDistance = dependencyInfo.distance(target.id, source.id);
+        if (Number.isFinite(upstreamDistance)) {
+          return upstreamDistance;
+        }
+        const downstreamDistance = dependencyInfo.distance(source.id, target.id);
+        if (Number.isFinite(downstreamDistance)) {
+          return 100 + downstreamDistance;
+        }
+        return 240 + layerGap;
+      }
+      if (targetIsFinal) {
+        return 260 + layerGap;
+      }
+      return 300 + layerGap;
+    }
+
+    if (sourceIsRecipe) {
+      if (targetIsRecipe) {
+        const downstreamDistance = dependencyInfo.distance(source.id, target.id);
+        if (Number.isFinite(downstreamDistance)) {
+          return 400 + downstreamDistance;
+        }
+        const upstreamDistance = dependencyInfo.distance(target.id, source.id);
+        if (Number.isFinite(upstreamDistance)) {
+          return 520 + upstreamDistance;
+        }
+        return 560 + layerGap;
+      }
+      if (targetIsFinal) {
+        return 420 + layerGap;
+      }
+      return 600 + layerGap;
+    }
+
+    if (source.type === "raw") {
+      return 700 + layerGap;
+    }
+    return 800 + layerGap;
+  }
+
+  function buildRecipeDependencyInfo(producersByMaterial, consumersByMaterial, nodes) {
+    const recipeIds = new Set(
+      Array.from(nodes.values())
+        .filter((node) => node.type === "recipe")
+        .map((node) => node.id),
+    );
+    const adjacency = new Map(Array.from(recipeIds, (recipeId) => [recipeId, new Set()]));
+    const materialClasses = new Set([...producersByMaterial.keys(), ...consumersByMaterial.keys()]);
+    materialClasses.forEach((itemClass) => {
+      const producers = producersByMaterial.get(itemClass) || [];
+      const consumers = consumersByMaterial.get(itemClass) || [];
+      producers.forEach((producer) => {
+        // Byproducts are excluded here so they do not make every possible consumer look downstream.
+        if (producer.byproduct || !recipeIds.has(producer.nodeId)) {
+          return;
+        }
+        consumers.forEach((consumer) => {
+          if (producer.nodeId !== consumer.nodeId && recipeIds.has(consumer.nodeId)) {
+            adjacency.get(producer.nodeId)?.add(consumer.nodeId);
+          }
+        });
+      });
+    });
+
+    const distanceCache = new Map();
+    const distance = (sourceId, targetId) => {
+      if (sourceId === targetId) {
+        return 0;
+      }
+      if (!recipeIds.has(sourceId) || !recipeIds.has(targetId)) {
+        return Number.POSITIVE_INFINITY;
+      }
+      const cacheKey = `${sourceId}\n${targetId}`;
+      if (distanceCache.has(cacheKey)) {
+        return distanceCache.get(cacheKey);
+      }
+      const queue = [{ id: sourceId, distance: 0 }];
+      const visited = new Set([sourceId]);
+      while (queue.length) {
+        const current = queue.shift();
+        for (const nextId of adjacency.get(current.id) || []) {
+          if (visited.has(nextId)) {
+            continue;
+          }
+          const nextDistance = current.distance + 1;
+          if (nextId === targetId) {
+            distanceCache.set(cacheKey, nextDistance);
+            return nextDistance;
+          }
+          visited.add(nextId);
+          queue.push({ id: nextId, distance: nextDistance });
+        }
+      }
+      distanceCache.set(cacheKey, Number.POSITIVE_INFINITY);
+      return Number.POSITIVE_INFINITY;
+    };
+
+    return { distance };
   }
 
   function layoutFlowGraph(nodes, edges, balanceByClass) {
