@@ -1150,11 +1150,12 @@
     const recipeNodes = nodes.filter((node) => node.type === "recipe");
     const recipeIds = new Set(recipeNodes.map((node) => node.id));
     const adjacency = new Map(recipeNodes.map((node) => [node.id, []]));
+    const primaryOutputRecipeEdges = edges.filter(
+      (edge) => !edge.byproduct && recipeIds.has(edge.source) && recipeIds.has(edge.target),
+    );
 
-    edges.forEach((edge) => {
-      if (recipeIds.has(edge.source) && recipeIds.has(edge.target)) {
-        adjacency.get(edge.source).push(edge.target);
-      }
+    primaryOutputRecipeEdges.forEach((edge) => {
+      adjacency.get(edge.source).push(edge.target);
     });
 
     const components = stronglyConnectedComponents(recipeNodes.map((node) => node.id), adjacency);
@@ -1164,10 +1165,7 @@
     });
 
     const componentEdges = new Map(components.map((_component, index) => [index, new Set()]));
-    edges.forEach((edge) => {
-      if (!recipeIds.has(edge.source) || !recipeIds.has(edge.target)) {
-        return;
-      }
+    primaryOutputRecipeEdges.forEach((edge) => {
       const sourceComponent = componentByNode.get(edge.source);
       const targetComponent = componentByNode.get(edge.target);
       if (sourceComponent !== targetComponent) {

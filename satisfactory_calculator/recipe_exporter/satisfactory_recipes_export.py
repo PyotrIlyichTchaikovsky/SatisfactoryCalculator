@@ -22,7 +22,7 @@ from typing import Any, Iterable, Sequence
 from xml.sax.saxutils import escape
 
 
-SCRIPT_VERSION = "0.3.3"
+SCRIPT_VERSION = "0.3.4"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
 EXCEL_FILE_NAME = "Satisfactory_Recipes_Wide.xlsx"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -594,10 +594,11 @@ def build_fueled_power_recipe(
         if supplemental_item is not None and supplemental_rate > 0:
             inputs.append(ingredient_with_rate(supplemental_class, supplemental_item, supplemental_rate))
 
-    outputs = [ingredient_with_rate(power_class, power_item, power_rate)]
+    power_output = ingredient_with_rate(power_class, power_item, power_rate)
+    outputs = [power_output]
     byproduct = byproduct_ingredient(generator_obj, fuel_entry, fuel_item, fuel_per_min, items)
     if byproduct is not None:
-        outputs.append(byproduct)
+        outputs = [byproduct, power_output]
 
     return Recipe(
         recipe_id=f"Recipe_Power_{generator_class}_{fuel_class}",
