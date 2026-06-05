@@ -10,15 +10,18 @@
   const treeView = document.getElementById("treeView");
   const tableView = document.getElementById("tableView");
   const resetLayoutButton = document.getElementById("resetLayoutButton");
-  const resetRecipeSelectionsButton = document.getElementById("resetRecipeSelectionsButton");
+  const recipePresetSelect = document.getElementById("recipePresetSelect");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
   const GRAPH_FLOW_WIDTH = 8;
+  const RECIPE_MODE_BASE = "base";
+  const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
 
   let items = [];
   const itemsByClass = new Map();
   const recipeSelections = new Map();
   const recipeNodePositions = new Map();
+  let pendingRecipeMode = RECIPE_MODE_BASE;
   let activeTab = "tree";
   let savedState = loadPlannerState();
   let suppressStateSave = false;
@@ -33,7 +36,7 @@
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
-  resetRecipeSelectionsButton?.addEventListener("click", resetRecipeSelections);
+  recipePresetSelect?.addEventListener("change", () => applyRecipePreset(recipePresetSelect.value));
 
   restoreRecipeSelections(savedState.recipeSelections);
   restoreRecipeNodePositions(savedState.recipeNodePositions);
@@ -77,9 +80,10 @@
             rate: target.rate,
           })),
           selectedRecipes: selectedRecipesPayload(),
+          recipeMode: pendingRecipeMode,
         }),
       });
-      reconcileRecipeSelections(result);
+      reconcileRecipeSelections(result, { captureAll: pendingRecipeMode === RECIPE_MODE_BEST_EFFICIENCY });
       renderGraphView(result);
       renderMergedTable(result.totals || []);
       selectTab("tree");
@@ -95,6 +99,11 @@
       setStatus(`Calculation failed: ${error.message}`, true);
       treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
       tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
+    } finally {
+      pendingRecipeMode = RECIPE_MODE_BASE;
+      if (recipePresetSelect) {
+        recipePresetSelect.value = "";
+      }
     }
   }
 
@@ -246,9 +255,31 @@
     );
   }
 
-  function reconcileRecipeSelections(result) {
+  function reconcileRecipeSelections(result, options = {}) {
     const effectiveSelections = result?.selectedRecipes;
-    if (!effectiveSelections || typeof effectiveSelections !== "object" || !recipeSelections.size) {
+    if (!effectiveSelections || typeof effectiveSelections !== "object") {
+      return;
+    }
+
+    if (options.captureAll) {
+      recipeSelections.clear();
+      Object.entries(effectiveSelections).forEach(([itemClass, recipeId]) => {
+        const cleanItemClass = String(itemClass || "").trim();
+        const cleanRecipeId = String(recipeId || "").trim();
+        if (cleanItemClass && cleanRecipeId) {
+          recipeSelections.set(cleanItemClass, {
+            itemClass: cleanItemClass,
+            itemName: cleanItemClass,
+            recipeId: cleanRecipeId,
+            recipeName: cleanRecipeId,
+          });
+        }
+      });
+      savePlannerState();
+      return;
+    }
+
+    if (!recipeSelections.size) {
       return;
     }
 
@@ -309,13 +340,23 @@
     recalculateIfTargetsExist();
   }
 
-  function resetRecipeSelections() {
-    if (!recipeSelections.size) {
+  function applyRecipePreset(rawMode) {
+    const mode = normalizeRecipeMode(rawMode);
+    if (!mode) {
       return;
     }
     recipeSelections.clear();
+    pendingRecipeMode = mode;
     savePlannerState();
     recalculateIfTargetsExist();
+  }
+
+  function normalizeRecipeMode(rawMode) {
+    const mode = String(rawMode || "").trim();
+    if (mode === RECIPE_MODE_BASE || mode === RECIPE_MODE_BEST_EFFICIENCY) {
+      return mode;
+    }
+    return "";
   }
 
   function selectRecipeForOutput(recipe, option) {

@@ -283,6 +283,31 @@ h2 {
   white-space: nowrap;
 }
 
+.recipe-preset-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.recipe-preset-select {
+  min-width: 116px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+}
+
 .remove-button {
   width: 76px;
   padding: 0;
@@ -725,6 +750,15 @@ h2 {
 
   .compact-button {
     width: 100%;
+  }
+
+  .recipe-preset-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .recipe-preset-select {
+    flex: 1;
   }
 
   .tabs {

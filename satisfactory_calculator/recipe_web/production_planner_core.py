@@ -25,6 +25,8 @@ _COLUMN_RE = re.compile(r"[A-Z]+")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _LP_EPS = 1e-7
 _RESULT_EPS = 1e-5
+_RECIPE_MODE_BASE = "base"
+_RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency"
 
 
 class PlannerError(ValueError):
@@ -162,17 +164,29 @@ class ProductionPlanner:
         self,
         targets: Iterable[dict[str, Any]],
         selected_recipes: Any | None = None,
+        recipe_mode: Any | None = None,
     ) -> dict[str, Any]:
         parsed_targets = self._parse_targets(targets)
+        parsed_recipe_mode = self._parse_recipe_mode(recipe_mode)
         recipe_selection_overrides = self._parse_recipe_selections(selected_recipes)
-        active_recipe_ids, effective_selections = self._active_recipe_selection(recipe_selection_overrides)
+        active_recipe_ids, base_selections = self._active_recipe_selection(
+            recipe_selection_overrides,
+            parsed_recipe_mode,
+        )
         solution = self._solve_linear_plan(parsed_targets, active_recipe_ids)
+        effective_selections = self._effective_recipe_selection(
+            recipe_selection_overrides,
+            base_selections,
+            solution["recipeRuns"],
+            parsed_recipe_mode,
+        )
 
         return {
             "targets": [
                 {"item": self._item_to_dict(target["item"]), "rate": target["rate"]}
                 for target in parsed_targets
             ],
+            "recipeMode": parsed_recipe_mode,
             "selectedRecipes": effective_selections,
             "roots": solution["layers"],
             "layers": solution["layers"],
@@ -187,8 +201,15 @@ class ProductionPlanner:
                 "objectiveValue": solution["objectiveValue"],
                 "secondaryObjectiveValue": solution["secondaryObjectiveValue"],
                 "selectedRecipeCount": len(recipe_selection_overrides),
+                "recipeMode": parsed_recipe_mode,
             },
         }
+
+    def _parse_recipe_mode(self, recipe_mode: Any | None) -> str:
+        mode = str(recipe_mode or _RECIPE_MODE_BASE).strip()
+        if mode in {_RECIPE_MODE_BASE, _RECIPE_MODE_BEST_EFFICIENCY}:
+            return mode
+        raise PlannerError(f"Unknown recipeMode: {mode}")
 
     def _parse_recipe_selections(self, selected_recipes: Any | None) -> dict[str, str]:
         if selected_recipes is None:
@@ -205,16 +226,58 @@ class ProductionPlanner:
                 selections[item_class] = recipe_id
         return selections
 
-    def _active_recipe_selection(self, selected_recipes: dict[str, str]) -> tuple[set[str], dict[str, str]]:
+    def _active_recipe_selection(
+        self,
+        selected_recipes: dict[str, str],
+        recipe_mode: str,
+    ) -> tuple[set[str], dict[str, str]]:
         active_recipe_ids: set[str] = set()
-        effective_selections: dict[str, str] = {}
+        base_selections: dict[str, str] = {}
         for group in self.replacement_groups:
             selected_recipe_id = selected_recipes.get(group.item_class) or group.recipe_ids[0]
             if selected_recipe_id not in group.recipe_ids:
                 selected_recipe_id = group.recipe_ids[0]
-            active_recipe_ids.add(selected_recipe_id)
-            effective_selections[group.item_class] = selected_recipe_id
-        return active_recipe_ids, effective_selections
+            if recipe_mode == _RECIPE_MODE_BEST_EFFICIENCY and group.item_class not in selected_recipes:
+                active_recipe_ids.update(group.recipe_ids)
+            else:
+                active_recipe_ids.add(selected_recipe_id)
+            base_selections[group.item_class] = selected_recipe_id
+        return active_recipe_ids, base_selections
+
+    def _effective_recipe_selection(
+        self,
+        selected_recipes: dict[str, str],
+        base_selections: dict[str, str],
+        recipe_runs: list[dict[str, Any]],
+        recipe_mode: str,
+    ) -> dict[str, str]:
+        if recipe_mode != _RECIPE_MODE_BEST_EFFICIENCY:
+            return dict(base_selections)
+
+        used_scales = {
+            str(run.get("id") or ""): float(run.get("scale") or 0.0)
+            for run in recipe_runs
+        }
+        effective_selections: dict[str, str] = {}
+        for group in self.replacement_groups:
+            selected_recipe_id = selected_recipes.get(group.item_class)
+            if selected_recipe_id in group.recipe_ids:
+                effective_selections[group.item_class] = selected_recipe_id
+                continue
+
+            best_recipe_id = max(
+                group.recipe_ids,
+                key=lambda recipe_id: (
+                    used_scales.get(recipe_id, 0.0),
+                    -group.recipe_ids.index(recipe_id),
+                ),
+            )
+            effective_selections[group.item_class] = (
+                best_recipe_id
+                if used_scales.get(best_recipe_id, 0.0) > _RESULT_EPS
+                else group.recipe_ids[0]
+            )
+        return effective_selections
 
     def _parse_targets(self, targets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         parsed: list[dict[str, Any]] = []
