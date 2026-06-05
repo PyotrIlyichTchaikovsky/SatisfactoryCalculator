@@ -29,6 +29,8 @@
   let suppressStateSave = false;
   let activeGraphDrag = null;
   let activeGraphPan = null;
+  let selectedGraphRecipeId = "";
+  let suppressNextGraphBlankClick = false;
   let lastServerResult = null;
   let lastServerTargets = [];
   let lastServerRecipeSelectionSignature = "";
@@ -134,6 +136,7 @@
   }
 
   function renderPlannerResult(result, options = {}) {
+    selectedGraphRecipeId = "";
     renderGraphView(result, { preserveViewport: Boolean(options.preserveGraphViewport) });
     renderMergedTable(result.totals || []);
     if (options.selectTree) {
@@ -1369,8 +1372,16 @@
     svg.setAttribute("height", String(graph.height));
     svg.setAttribute("viewBox", `0 0 ${graph.width} ${graph.height}`);
     graph.svg = svg;
+
+    const highlightSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    highlightSvg.setAttribute("class", "graph-svg graph-highlight-svg");
+    highlightSvg.setAttribute("width", String(graph.width));
+    highlightSvg.setAttribute("height", String(graph.height));
+    highlightSvg.setAttribute("viewBox", `0 0 ${graph.width} ${graph.height}`);
+    graph.highlightSvg = highlightSvg;
     graph.baseWidth = graph.width;
     graph.baseHeight = graph.height;
+    graph.selectedNodeId = selectedGraphRecipeId;
 
     graph.edges.forEach((edge) => {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1382,6 +1393,7 @@
       svg.appendChild(path);
     });
     canvas.appendChild(svg);
+    canvas.appendChild(highlightSvg);
 
     graph.edges.forEach((edge) => {
       if (!edge.x1 && !edge.x2) return;
@@ -1397,7 +1409,9 @@
     });
 
     viewport.appendChild(canvas);
+    bindGraphSelectionClear(viewport, graph);
     bindGraphPan(viewport);
+    applyGraphSelection(graph, selectedGraphRecipeId);
     return viewport;
   }
 
@@ -1409,6 +1423,14 @@
     card.addEventListener("dragstart", (event) => event.preventDefault());
     if (node.type === "recipe") {
       card.classList.add("draggable");
+      card.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest("button, .graph-drag-zone, .graph-drag-handle")) {
+          return;
+        }
+        event.stopPropagation();
+        selectGraphRecipe(graph, node.id);
+      });
     }
     if (node.type === "recipe" && canSwitchRecipe(node.recipe)) {
       card.classList.add("has-switch-button");
@@ -1458,12 +1480,20 @@
     const title = document.createElement("div");
     title.className = "graph-node-title";
     title.textContent = node.title;
+    if (node.type === "recipe" && node.meta) {
+      const scale = document.createElement("span");
+      scale.className = "graph-node-scale";
+      scale.textContent = node.meta;
+      title.append(" ", scale);
+    }
 
-    const meta = document.createElement("div");
-    meta.className = "graph-node-meta";
-    meta.textContent = node.meta;
-
-    card.append(kind, title, meta);
+    card.append(kind, title);
+    if (node.type !== "recipe" && node.meta) {
+      const meta = document.createElement("div");
+      meta.className = "graph-node-meta";
+      meta.textContent = node.meta;
+      card.appendChild(meta);
+    }
 
     const balance = node.item ? graph.balanceByClass.get(node.item.className) : null;
     if (node.alternate || node.type === "surplus" || (balance && isPositive(Number(balance.surplus)))) {
@@ -1478,6 +1508,112 @@
     }
 
     return card;
+  }
+
+  function bindGraphSelectionClear(viewport, graph) {
+    viewport.addEventListener("click", (event) => {
+      if (suppressNextGraphBlankClick) {
+        suppressNextGraphBlankClick = false;
+        return;
+      }
+      const target = event.target;
+      if (target instanceof Element && target.closest(".graph-node, .graph-flow, .graph-edge-label, button, input, select, textarea, a")) {
+        return;
+      }
+      clearGraphSelectionForGraph(graph);
+    });
+  }
+
+  function selectGraphRecipe(graph, nodeId) {
+    selectedGraphRecipeId = nodeId;
+    applyGraphSelection(graph, nodeId);
+  }
+
+  function clearGraphSelectionForGraph(graph) {
+    if (!graph) {
+      selectedGraphRecipeId = "";
+      return;
+    }
+    selectedGraphRecipeId = "";
+    applyGraphSelection(graph, "");
+  }
+
+  function applyGraphSelection(graph, selectedNodeId) {
+    const selectedNode = selectedNodeId ? graph.nodeById.get(selectedNodeId) : null;
+    const hasSelection = Boolean(selectedNode && selectedNode.type === "recipe");
+    const highlightedNodeIds = new Set();
+    const upstreamNodeIds = new Set();
+    const downstreamNodeIds = new Set();
+    const highlightedEdgeIds = new Set();
+
+    if (hasSelection) {
+      highlightedNodeIds.add(selectedNodeId);
+      graph.edges.forEach((edge) => {
+        if (edge.target === selectedNodeId) {
+          highlightedEdgeIds.add(edge.id);
+          upstreamNodeIds.add(edge.source);
+          highlightedNodeIds.add(edge.source);
+        } else if (edge.source === selectedNodeId) {
+          highlightedEdgeIds.add(edge.id);
+          downstreamNodeIds.add(edge.target);
+          highlightedNodeIds.add(edge.target);
+        }
+      });
+    } else {
+      selectedNodeId = "";
+    }
+
+    graph.selectedNodeId = selectedNodeId;
+    selectedGraphRecipeId = selectedNodeId;
+
+    graph.edges.forEach((edge) => {
+      const isHighlighted = highlightedEdgeIds.has(edge.id);
+      const pathParent = isHighlighted && graph.highlightSvg ? graph.highlightSvg : graph.svg;
+      if (edge.pathElement && pathParent && edge.pathElement.parentNode !== pathParent) {
+        pathParent.appendChild(edge.pathElement);
+      }
+      edge.pathElement?.classList.toggle("highlight-edge", isHighlighted);
+      edge.pathElement?.classList.toggle("dimmed", hasSelection && !isHighlighted);
+      edge.labelElement?.classList.toggle("highlight-edge", isHighlighted);
+      edge.labelElement?.classList.toggle("dimmed", hasSelection && !isHighlighted);
+    });
+
+    graph.nodes.forEach((node) => {
+      const isSelected = node.id === selectedNodeId;
+      const isUpstream = upstreamNodeIds.has(node.id);
+      const isDownstream = downstreamNodeIds.has(node.id);
+      const isHighlighted = highlightedNodeIds.has(node.id);
+      node.element?.classList.toggle("selected", isSelected);
+      node.element?.classList.toggle("highlight-upstream", isUpstream);
+      node.element?.classList.toggle("highlight-downstream", isDownstream);
+      node.element?.classList.toggle("dimmed", hasSelection && !isHighlighted);
+    });
+
+    if (!hasSelection) {
+      return;
+    }
+
+    graph.edges.forEach((edge) => {
+      if (highlightedEdgeIds.has(edge.id)) {
+        bringToFront(edge.pathElement);
+      }
+    });
+    graph.edges.forEach((edge) => {
+      if (highlightedEdgeIds.has(edge.id)) {
+        bringToFront(edge.labelElement);
+      }
+    });
+    graph.nodes.forEach((node) => {
+      if (highlightedNodeIds.has(node.id)) {
+        bringToFront(node.element);
+      }
+    });
+  }
+
+  function bringToFront(element) {
+    if (element?.parentNode) {
+      element.parentNode.appendChild(element);
+    }
   }
 
   function canSwitchRecipe(recipe) {
@@ -1625,6 +1761,10 @@
       viewport.classList.remove("panning");
       activeGraphPan = null;
       if (moved) {
+        suppressNextGraphBlankClick = true;
+        window.setTimeout(() => {
+          suppressNextGraphBlankClick = false;
+        }, 0);
         stopEvent.preventDefault();
       }
     };
@@ -1780,6 +1920,7 @@
         edge.labelElement.style.top = `${edge.labelY}px`;
       }
     });
+    applyGraphSelection(graph, graph.selectedNodeId || "");
   }
 
   function resizeGraphCanvas(graph) {
@@ -1795,6 +1936,9 @@
     graph.svg.setAttribute("width", String(width));
     graph.svg.setAttribute("height", String(height));
     graph.svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    graph.highlightSvg?.setAttribute("width", String(width));
+    graph.highlightSvg?.setAttribute("height", String(height));
+    graph.highlightSvg?.setAttribute("viewBox", `0 0 ${width} ${height}`);
   }
 
   function renderEdgeLabel(edge) {
@@ -1802,7 +1946,13 @@
     label.className = "graph-edge-label";
     label.style.left = `${edge.labelX}px`;
     label.style.top = `${edge.labelY}px`;
-    label.textContent = `${edge.item.name} ${formatNumber(edge.rate)}/min`;
+    const name = document.createElement("span");
+    name.className = "graph-edge-label-name";
+    name.textContent = edge.item.name;
+    const rate = document.createElement("span");
+    rate.className = "graph-edge-label-rate";
+    rate.textContent = `${formatNumber(edge.rate)}/min`;
+    label.append(name, rate);
     label.title = `${edge.item.name}: ${formatNumber(edge.rate)} ${edge.item.unit}/min`;
     return label;
   }
