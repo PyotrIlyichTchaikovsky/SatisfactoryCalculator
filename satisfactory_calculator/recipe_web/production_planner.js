@@ -18,15 +18,19 @@
   const GRAPH_VIEWPORT_BOTTOM_GAP = 18;
   const RECIPE_MODE_BASE = "base";
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
+  const DIRECT_RAW_RECIPE_ID = "__raw__";
 
   let items = [];
   const itemsByClass = new Map();
   const recipeSelections = new Map();
+  const recipeSelectionsByTargetKey = new Map();
   const recipeNodePositions = new Map();
-  let pendingRecipeMode = RECIPE_MODE_BASE;
   let activeTab = "tree";
   let savedState = loadPlannerState();
+  let pendingRecipeMode = normalizeRecipeMode(savedState.recipeMode) || RECIPE_MODE_BASE;
   let suppressStateSave = false;
+  let activeRecipeSelectionKey = "";
+  let clearSelectionsForNextRequest = false;
   let activeGraphDrag = null;
   let activeGraphPan = null;
   let selectedGraphRecipeId = "";
@@ -47,7 +51,7 @@
   recipePresetSelect?.addEventListener("change", () => applyRecipePreset(recipePresetSelect.value));
   window.addEventListener("resize", handleWindowResize);
 
-  restoreRecipeSelections(savedState.recipeSelections);
+  restoreRecipeSelectionCache(savedState.recipeSelectionsByTarget);
   restoreRecipeNodePositions(savedState.recipeNodePositions);
   loadInitialData();
 
@@ -60,6 +64,7 @@
       if (!restoreTargetRows(savedState.targets)) {
         addTargetRow(null, "", { focus: false, save: false });
       }
+      activateRecipeSelectionCacheForCurrentTargets({ legacySelections: savedState.recipeSelections });
       dataSummary.textContent = summaryText(summary);
       setStatus("Loaded Excel recipe data from server. Select items and enter rates per minute.", false);
     } catch (error) {
@@ -76,10 +81,13 @@
     if (!targets.length) {
       return;
     }
+    activateRecipeSelectionCacheForCurrentTargets();
     savePlannerState();
 
     setStatus("正在请求服务端计算...", false);
     const requestRecipeMode = pendingRecipeMode;
+    const requestSelectedRecipes = clearSelectionsForNextRequest ? {} : selectedRecipesPayload();
+    clearSelectionsForNextRequest = false;
     try {
       const result = await fetchJson("/api/plan", {
         method: "POST",
@@ -89,11 +97,11 @@
             itemClass: target.item.className,
             rate: target.rate,
           })),
-          selectedRecipes: selectedRecipesPayload(),
+          selectedRecipes: requestSelectedRecipes,
           recipeMode: requestRecipeMode,
         }),
       });
-      reconcileRecipeSelections(result, { captureAll: requestRecipeMode === RECIPE_MODE_BEST_EFFICIENCY });
+      reconcileRecipeSelections(result);
       lastServerResult = clonePlannerResult(result);
       lastServerTargets = targetSnapshotsFromTargets(targets);
       lastServerRecipeSelectionSignature = recipeSelectionSignature();
@@ -114,7 +122,6 @@
       treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
       tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
     } finally {
-      pendingRecipeMode = RECIPE_MODE_BASE;
       if (recipePresetSelect) {
         recipePresetSelect.value = "";
       }
@@ -157,9 +164,15 @@
     if (suppressStateSave) {
       return;
     }
+    storeCurrentRecipeSelections();
     const state = {
       targets: collectTargetState(),
+      recipeMode: pendingRecipeMode,
       recipeSelections: Array.from(recipeSelections.values()),
+      recipeSelectionsByTarget: Array.from(recipeSelectionsByTargetKey.entries()).map(([key, selections]) => ({
+        key,
+        selections,
+      })),
       recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
         id,
         x: roundGraphCoordinate(position.x),
@@ -238,14 +251,45 @@
     return items.find((item) => compact(item.name) === compactName) || null;
   }
 
+  function restoreRecipeSelectionCache(cacheEntries) {
+    recipeSelectionsByTargetKey.clear();
+    if (Array.isArray(cacheEntries)) {
+      cacheEntries.forEach((entry) => {
+        const key = String(entry?.key || "").trim();
+        const selections = normalizeRecipeSelections(entry?.selections);
+        if (key && selections.length) {
+          recipeSelectionsByTargetKey.set(key, selections);
+        }
+      });
+      return;
+    }
+
+    if (cacheEntries && typeof cacheEntries === "object") {
+      Object.entries(cacheEntries).forEach(([key, selections]) => {
+        const cleanKey = String(key || "").trim();
+        const normalizedSelections = normalizeRecipeSelections(selections);
+        if (cleanKey && normalizedSelections.length) {
+          recipeSelectionsByTargetKey.set(cleanKey, normalizedSelections);
+        }
+      });
+    }
+  }
+
   function restoreRecipeSelections(selectionEntries) {
     recipeSelections.clear();
+    normalizeRecipeSelections(selectionEntries).forEach((selection) => {
+      recipeSelections.set(selection.itemClass, selection);
+    });
+  }
+
+  function normalizeRecipeSelections(selectionEntries) {
+    const selections = [];
     if (Array.isArray(selectionEntries)) {
       selectionEntries.forEach((entry) => {
         const itemClass = String(entry?.itemClass || "").trim();
         const recipeId = String(entry?.recipeId || "").trim();
         if (itemClass && recipeId) {
-          recipeSelections.set(itemClass, {
+          selections.push({
             itemClass,
             itemName: String(entry?.itemName || itemClass),
             recipeId,
@@ -253,7 +297,7 @@
           });
         }
       });
-      return;
+      return selections;
     }
 
     if (selectionEntries && typeof selectionEntries === "object") {
@@ -261,7 +305,7 @@
         const cleanItemClass = String(itemClass || "").trim();
         const cleanRecipeId = String(recipeId || "").trim();
         if (cleanItemClass && cleanRecipeId) {
-          recipeSelections.set(cleanItemClass, {
+          selections.push({
             itemClass: cleanItemClass,
             itemName: cleanItemClass,
             recipeId: cleanRecipeId,
@@ -270,6 +314,52 @@
         }
       });
     }
+    return selections;
+  }
+
+  function activateRecipeSelectionCacheForCurrentTargets(options = {}) {
+    const nextKey = currentTargetRecipeSelectionKey();
+    if (nextKey === activeRecipeSelectionKey) {
+      return;
+    }
+
+    storeCurrentRecipeSelections();
+    activeRecipeSelectionKey = nextKey;
+    recipeSelections.clear();
+    if (!nextKey) {
+      return;
+    }
+
+    const cachedSelections = recipeSelectionsByTargetKey.get(nextKey);
+    if (cachedSelections) {
+      restoreRecipeSelections(cachedSelections);
+      return;
+    }
+
+    const legacySelections = normalizeRecipeSelections(options.legacySelections);
+    if (legacySelections.length) {
+      restoreRecipeSelections(legacySelections);
+      storeCurrentRecipeSelections();
+    }
+  }
+
+  function storeCurrentRecipeSelections() {
+    if (!activeRecipeSelectionKey) {
+      return;
+    }
+    const selections = Array.from(recipeSelections.values());
+    if (selections.length) {
+      recipeSelectionsByTargetKey.set(activeRecipeSelectionKey, selections);
+    } else {
+      recipeSelectionsByTargetKey.delete(activeRecipeSelectionKey);
+    }
+  }
+
+  function currentTargetRecipeSelectionKey() {
+    return collectTargetState()
+      .filter((target) => target.itemClass || target.itemName)
+      .map((target) => target.itemClass || `name:${compact(target.itemName || "")}`)
+      .join("|");
   }
 
   function selectedRecipesPayload() {
@@ -278,54 +368,71 @@
     );
   }
 
-  function reconcileRecipeSelections(result, options = {}) {
-    const effectiveSelections = result?.selectedRecipes;
-    if (!effectiveSelections || typeof effectiveSelections !== "object") {
-      return;
-    }
+  function reconcileRecipeSelections(result) {
+    recipeSelections.clear();
+    recipeSelectionsFromResult(result).forEach((selection) => {
+      recipeSelections.set(selection.itemClass, selection);
+    });
+    savePlannerState();
+  }
 
-    if (options.captureAll) {
-      recipeSelections.clear();
-      Object.entries(effectiveSelections).forEach(([itemClass, recipeId]) => {
-        const cleanItemClass = String(itemClass || "").trim();
-        const cleanRecipeId = String(recipeId || "").trim();
-        if (cleanItemClass && cleanRecipeId) {
-          recipeSelections.set(cleanItemClass, {
-            itemClass: cleanItemClass,
-            itemName: cleanItemClass,
-            recipeId: cleanRecipeId,
-            recipeName: cleanRecipeId,
-          });
-        }
-      });
-      savePlannerState();
-      return;
-    }
-
-    if (!recipeSelections.size) {
-      return;
-    }
-
-    let changed = false;
-    recipeSelections.forEach((selection, itemClass) => {
-      const effectiveRecipeId = String(effectiveSelections[itemClass] || "").trim();
-      if (!effectiveRecipeId) {
-        recipeSelections.delete(itemClass);
-        changed = true;
-        return;
-      }
-      if (effectiveRecipeId !== selection.recipeId) {
-        recipeSelections.set(itemClass, {
-          ...selection,
-          recipeId: effectiveRecipeId,
-        });
-        changed = true;
-      }
+  function recipeSelectionsFromResult(result) {
+    const selections = new Map();
+    (result?.recipeRuns || []).forEach((run) => {
+      const recipe = run.recipe || {};
+      addResultRecipeSelection(
+        selections,
+        recipe.primaryOutput || {},
+        String(recipe.id || run.id || "").trim(),
+        recipe.name || recipe.id || run.id || "",
+        true,
+      );
     });
 
-    if (changed) {
-      savePlannerState();
+    (result?.rawTotals || []).forEach((row) => {
+      addResultRecipeSelection(
+        selections,
+        row.item || {},
+        String(row.selectedRecipeId || "").trim(),
+        recipeOptionName(row, row.selectedRecipeId),
+        false,
+      );
+    });
+    (result?.totals || []).forEach((row) => {
+      if (!row.raw) {
+        return;
+      }
+      addResultRecipeSelection(
+        selections,
+        row.item || {},
+        String(row.selectedRecipeId || "").trim(),
+        recipeOptionName(row, row.selectedRecipeId),
+        false,
+      );
+    });
+    return Array.from(selections.values());
+  }
+
+  function addResultRecipeSelection(selections, item, recipeId, recipeName, overwrite) {
+    const itemClass = String(item?.className || "").trim();
+    if (!itemClass || !recipeId) {
+      return;
     }
+    if (!overwrite && selections.has(itemClass)) {
+      return;
+    }
+    selections.set(itemClass, {
+      itemClass,
+      itemName: item.name || itemClass,
+      recipeId,
+      recipeName: recipeName || recipeId,
+    });
+  }
+
+  function recipeOptionName(source, recipeId) {
+    const id = String(recipeId || "").trim();
+    const option = (source?.replacementOptions || []).find((entry) => entry.id === id);
+    return option?.name || id;
   }
 
   function restoreRecipeNodePositions(positionEntries) {
@@ -368,7 +475,10 @@
     if (!mode) {
       return;
     }
+    activateRecipeSelectionCacheForCurrentTargets();
     recipeSelections.clear();
+    storeCurrentRecipeSelections();
+    clearSelectionsForNextRequest = true;
     pendingRecipeMode = mode;
     savePlannerState();
     recalculateIfTargetsExist();
@@ -383,6 +493,7 @@
   }
 
   function selectRecipeForOutput(recipe, option) {
+    activateRecipeSelectionCacheForCurrentTargets();
     const primaryOutput = recipe?.primaryOutput;
     const recipeId = String(option?.id || "").trim();
     if (!primaryOutput?.className || !recipeId) {
@@ -394,6 +505,8 @@
       recipeId,
       recipeName: option.name || recipeId,
     });
+    // Manual edits should refine the current solution, not reopen the full best-efficiency search space.
+    pendingRecipeMode = RECIPE_MODE_BASE;
     savePlannerState();
     recalculateIfTargetsExist();
   }
@@ -423,9 +536,11 @@
     }
 
     itemInput.addEventListener("input", () => {
+      activateRecipeSelectionCacheForCurrentTargets();
       delete row.dataset.itemClass;
       updateUnitLabel(row, null);
       renderSuggestions(row, itemInput.value);
+      activateRecipeSelectionCacheForCurrentTargets();
       savePlannerState();
     });
     amountInput.addEventListener("input", handleTargetAmountInput);
@@ -452,8 +567,10 @@
     });
 
     removeButton.addEventListener("click", () => {
+      activateRecipeSelectionCacheForCurrentTargets();
       row.remove();
       updateRemoveButtons();
+      activateRecipeSelectionCacheForCurrentTargets();
       savePlannerState();
     });
 
@@ -550,10 +667,12 @@
   }
 
   function selectItem(row, item) {
+    activateRecipeSelectionCacheForCurrentTargets();
     row.dataset.itemClass = item.className;
     row.querySelector(".item-input").value = item.name;
     updateUnitLabel(row, item);
     closeSuggestions(row);
+    activateRecipeSelectionCacheForCurrentTargets();
   }
 
   function updateUnitLabel(row, item) {
@@ -648,7 +767,7 @@
   }
 
   function tryRenderScaledResultForSnapshots(currentTargets, options = {}) {
-    if (!lastServerResult || pendingRecipeMode !== RECIPE_MODE_BASE) {
+    if (!lastServerResult) {
       return false;
     }
     if (recipeSelectionSignature() !== lastServerRecipeSelectionSignature) {
@@ -743,6 +862,7 @@
         scaleNumberProperty(balance, key, scaleFactor);
       });
     });
+    (result.targetAllocations || []).forEach((allocation) => scaleNumberProperty(allocation, "rate", scaleFactor));
     (result.rawTotals || []).forEach((raw) => scaleNumberProperty(raw, "rate", scaleFactor));
     (result.totals || []).forEach((row) => scaleNumberProperty(row, "rate", scaleFactor));
     (result.layers || []).forEach((layer) => {
@@ -875,6 +995,7 @@
   function buildFlowGraph(result) {
     const recipeRuns = result.recipeRuns || [];
     const targets = result.targets || [];
+    const targetAllocations = graphTargetAllocations(result, targets);
     const rawTotals = result.rawTotals || [];
     const balances = result.materialBalances || [];
     const balanceByClass = new Map(balances.map((balance) => [balance.item.className, balance]));
@@ -894,6 +1015,7 @@
         title: raw.item.name,
         meta: `${formatNumber(rate)} ${raw.item.unit}/min`,
         item: raw.item,
+        recipeSwitch: rawRecipeSwitch(raw),
         edgeColor: "rgb(45, 126, 192)",
       });
       addEndpoint(producersByMaterial, raw.item.className, {
@@ -943,20 +1065,26 @@
       });
     });
 
-    targets.forEach((target, index) => {
+    targetAllocations.forEach((target, index) => {
       const rate = Number(target.rate);
+      const targetItem = target.targetItem || target.item;
+      const flowItem = target.item || targetItem;
+      if (!targetItem || !flowItem) return;
       if (!isPositive(rate)) return;
+      const isAggregateTarget = targetItem.className !== flowItem.className;
       const node = addGraphNode(nodes, {
-        id: `target:${index}:${target.item.className}`,
+        id: `target:${index}:${targetItem.className}:${flowItem.className}`,
         type: "target",
         column: recipeColumnMax + 1,
-        title: target.item.name,
-        meta: `${formatNumber(rate)} ${target.item.unit}/min`,
-        item: target.item,
+        title: targetItem.name,
+        meta: isAggregateTarget
+          ? `${formatNumber(rate)} ${targetItem.unit}/min via ${flowItem.name}`
+          : `${formatNumber(rate)} ${targetItem.unit}/min`,
+        item: targetItem,
       });
-      addEndpoint(consumersByMaterial, target.item.className, {
+      addEndpoint(consumersByMaterial, flowItem.className, {
         nodeId: node.id,
-        item: target.item,
+        item: flowItem,
         rate,
         remaining: rate,
       });
@@ -988,6 +1116,31 @@
       edges,
       balanceByClass,
     };
+  }
+
+  function rawRecipeSwitch(raw) {
+    const options = Array.isArray(raw?.replacementOptions) ? raw.replacementOptions : [];
+    if (!raw?.item?.className || options.length <= 1) {
+      return null;
+    }
+    return {
+      id: String(raw.selectedRecipeId || raw.defaultRecipeId || DIRECT_RAW_RECIPE_ID),
+      name: raw.item.name || raw.item.className,
+      primaryOutput: raw.item,
+      replacementOptions: options,
+    };
+  }
+
+  function graphTargetAllocations(result, targets) {
+    if (Array.isArray(result.targetAllocations) && result.targetAllocations.length) {
+      return result.targetAllocations;
+    }
+    return (targets || []).map((target) => ({
+      targetItem: target.item,
+      item: target.item,
+      rate: target.rate,
+      kind: "direct",
+    }));
   }
 
   function recipeColumnsFromLayers(layers, recipeRuns) {
@@ -1580,6 +1733,7 @@
   }
 
   function renderGraphNode(node, graph) {
+    const switchRecipe = graphNodeSwitchRecipe(node);
     const card = document.createElement("article");
     card.className = `graph-node ${node.type}${node.alternate ? " alternate" : ""}`;
     card.dataset.nodeId = node.id;
@@ -1596,7 +1750,7 @@
         selectGraphRecipe(graph, node.id);
       });
     }
-    if (node.type === "recipe" && canSwitchRecipe(node.recipe)) {
+    if (canSwitchRecipe(switchRecipe)) {
       card.classList.add("has-switch-button");
     }
     card.style.left = `${node.x}px`;
@@ -1610,16 +1764,16 @@
       card.style.borderColor = node.borderColor;
     }
 
-    if (node.type === "recipe" && canSwitchRecipe(node.recipe)) {
+    if (canSwitchRecipe(switchRecipe)) {
       const switchButton = document.createElement("button");
       switchButton.type = "button";
       switchButton.className = "switch-recipe-button";
       switchButton.textContent = "\u6362";
       switchButton.title = "Switch the recipe used for this material";
-      switchButton.setAttribute("aria-label", `Switch recipe for ${node.recipe.primaryOutput?.name || node.recipe.name || node.title}`);
+      switchButton.setAttribute("aria-label", `Switch recipe for ${switchRecipe.primaryOutput?.name || switchRecipe.name || node.title}`);
       switchButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        openRecipeSwitchDialog(node.recipe);
+        openRecipeSwitchDialog(switchRecipe);
       });
       card.appendChild(switchButton);
     }
@@ -1672,6 +1826,16 @@
     }
 
     return card;
+  }
+
+  function graphNodeSwitchRecipe(node) {
+    if (node.type === "recipe") {
+      return node.recipe;
+    }
+    if (node.type === "raw") {
+      return node.recipeSwitch;
+    }
+    return null;
   }
 
   function bindGraphSelectionClear(viewport, graph) {
@@ -1825,11 +1989,12 @@
 
     const list = document.createElement("div");
     list.className = "recipe-switch-list";
+    const currentRecipeId = String(recipe.id || recipe.selectedRecipeId || recipe.defaultRecipeId || "").trim();
     recipe.replacementOptions.forEach((option) => {
       const optionButton = document.createElement("button");
       optionButton.type = "button";
-      optionButton.className = `recipe-switch-option${option.id === recipe.id ? " current" : ""}`;
-      if (option.id === recipe.id) {
+      optionButton.className = `recipe-switch-option${option.id === currentRecipeId ? " current" : ""}`;
+      if (option.id === currentRecipeId) {
         optionButton.disabled = true;
       }
 
@@ -1859,6 +2024,9 @@
   }
 
   function recipeOptionFormula(option) {
+    if (option?.isDirectRaw) {
+      return "直接作为外部原材料输入";
+    }
     return `${recipeOptionSide(option.inputs)} = ${recipeOptionSide(option.outputs)}`;
   }
 
@@ -2295,13 +2463,35 @@
       appendCell(tr, formatNumber(row.rate), "number-cell");
       appendCell(tr, row.item.unit);
       appendCell(tr, row.raw ? "原材料" : "中间材料");
-      appendCell(tr, Array.isArray(row.recipes) ? row.recipes.join(", ") : "");
+      appendRecipeUsageCell(tr, row);
       tbody.appendChild(tr);
     });
 
     table.append(thead, tbody);
     wrap.appendChild(table);
     tableView.replaceChildren(wrap);
+  }
+
+  function appendRecipeUsageCell(tr, row) {
+    const cell = document.createElement("td");
+    const switchRecipe = row.raw ? rawRecipeSwitch(row) : null;
+    if (canSwitchRecipe(switchRecipe)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "table-switch-recipe-button";
+      button.textContent = "换配方";
+      button.setAttribute("aria-label", `Switch recipe for ${switchRecipe.primaryOutput?.name || row.item?.name || ""}`);
+      button.addEventListener("click", () => openRecipeSwitchDialog(switchRecipe));
+      cell.appendChild(button);
+    }
+
+    const recipeText = Array.isArray(row.recipes) ? row.recipes.join(", ") : "";
+    if (recipeText) {
+      const text = document.createElement("span");
+      text.textContent = recipeText;
+      cell.appendChild(text);
+    }
+    tr.appendChild(cell);
   }
 
   function summaryText(summary) {

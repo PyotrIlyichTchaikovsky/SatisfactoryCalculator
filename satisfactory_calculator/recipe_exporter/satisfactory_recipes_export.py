@@ -22,9 +22,9 @@ from typing import Any, Iterable, Sequence
 from xml.sax.saxutils import escape
 
 
-SCRIPT_VERSION = "0.3.4"
+SCRIPT_VERSION = "0.3.8"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
-EXCEL_FILE_NAME = "Satisfactory_Recipes_Wide.xlsx"
+EXCEL_FILE_NAME = "SatisfactoryData.xlsx"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 RAW_DATA_DIR = PROJECT_ROOT / "raw_data"
@@ -37,6 +37,7 @@ ITEM_AMOUNT_RE = re.compile(
 CLASS_PATH_RE = re.compile(r"'(?P<path>/[^']+)'")
 INVALID_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 SYNTHETIC_POWER_NATIVE_CLASS = "SyntheticPowerItem"
+SYNTHETIC_POWER_GROUP_NATIVE_CLASS = "SyntheticPowerGroupItem"
 SYNTHETIC_POWER_SOURCE_CLASS = "SyntheticGeneratorPowerRecipe"
 STYLE_DEFAULT = 0
 STYLE_INPUT = 1
@@ -59,6 +60,17 @@ NUCLEAR_FUEL_REPLACEMENT_ORDER = {
 }
 RAW_REASON_RESOURCE_DESCRIPTOR = "游戏资源描述符（NativeClass 包含 FGResourceDescriptor）"
 RAW_REASON_NO_RECIPE_OUTPUT = "没有非采集配方产出（RecipeOutputs 中不存在该物品）"
+MATERIAL_CATEGORY_RAW = "原始材料"
+MATERIAL_CATEGORY_NORMAL = "普通材料"
+MATERIAL_CATEGORY_POWER = "电力"
+RECIPE_FLAG_PACKAGED = "装箱"
+RECIPE_FLAG_UNPACKAGED = "拆箱"
+RECIPE_FLAG_POWER = "发电"
+RECIPE_FLAG_PRIMARY = "主产品配方"
+RECIPE_FLAG_BYPRODUCT = "副产品配方"
+RECIPE_CATEGORY_BASE = "基础配方"
+RECIPE_CATEGORY_REPLACEMENT = "可替换配方"
+RECIPE_CATEGORY_UNUSABLE = "不可使用配方"
 
 
 @dataclass(frozen=True)
@@ -159,7 +171,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
 
     parser = argparse.ArgumentParser(
-        description="Export Satisfactory Docs.json recipes to a wide XLSX workbook.",
+        description="Export Satisfactory Docs.json recipes to an XLSX workbook.",
         parents=[config_pre_parser],
     )
     source = parser.add_mutually_exclusive_group()
@@ -174,7 +186,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Output .xlsx file path.",
     )
     parser.add_argument("--lang", default=argparse.SUPPRESS, help="Accepted for CLI compatibility; Docs.json is used as-is.")
-    parser.add_argument("--wide-only", action="store_true", default=argparse.SUPPRESS, help="Write only the RecipesWide sheet.")
+    parser.add_argument("--wide-only", action="store_true", default=argparse.SUPPRESS, help="Write only the MaterialRecipe sheet.")
     parser.add_argument("--debug-json", action="store_true", default=argparse.SUPPRESS, help="Also write parsed intermediate JSON next to the workbook.")
 
     parsed = parser.parse_args(argv)
@@ -432,18 +444,50 @@ def build_item_index(
 
 def add_power_items(items: dict[str, ItemInfo]) -> None:
     for item_class, display_name in dict(POWER_OUTPUT_BY_GENERATOR.values()).items():
-        if item_class in items:
-            continue
         info = ItemInfo(
             class_name=item_class,
-            display_name=display_name,
+            display_name=power_group_display_name(display_name),
             form="RF_POWER",
             unit="MW",
-            native_class=SYNTHETIC_POWER_NATIVE_CLASS,
+            native_class=SYNTHETIC_POWER_GROUP_NATIVE_CLASS,
         )
         items[item_class] = info
         if item_class.endswith("_C"):
             items[item_class[:-2]] = info
+
+
+def ensure_power_member_item(
+    items: dict[str, ItemInfo],
+    item_class: str,
+    display_name: str,
+) -> ItemInfo:
+    info = ItemInfo(
+        class_name=item_class,
+        display_name=display_name,
+        form="RF_POWER",
+        unit="MW",
+        native_class=SYNTHETIC_POWER_NATIVE_CLASS,
+    )
+    items[item_class] = info
+    if item_class.endswith("_C"):
+        items[item_class[:-2]] = info
+    return info
+
+
+def power_group_display_name(display_name: str) -> str:
+    return f"{display_name} (Any)"
+
+
+def power_member_display_name(power_name: str, route_name: str) -> str:
+    return f"{power_name} ({route_name})"
+
+
+def power_member_class(power_class: str, route_class: str) -> str:
+    base = power_class.removesuffix("_C")
+    route = route_class.removesuffix("_C")
+    route = route.removeprefix("Desc_").removeprefix("Build_")
+    route = re.sub(r"[^A-Za-z0-9]+", "_", route).strip("_")
+    return f"{base}_{route}_C"
 
 
 def build_recipes(
@@ -505,10 +549,7 @@ def build_power_recipes(
         if not power_definition:
             continue
 
-        power_class, _power_name = power_definition
-        power_item = item_info_for_class(power_class, items)
-        if power_item is None:
-            continue
+        power_class, power_name = power_definition
 
         generator_name = display_names.get(generator_class) or string_value(obj.get("mDisplayName")) or humanize_class_name(generator_class)
         power_rate = generator_power_rate(generator_class, obj)
@@ -516,6 +557,12 @@ def build_power_recipes(
             continue
 
         if generator_class == "Build_GeneratorGeoThermal_C":
+            member_class = power_member_class(power_class, generator_class)
+            member_item = ensure_power_member_item(
+                items,
+                member_class,
+                power_member_display_name(power_name, generator_name),
+            )
             recipes.append(
                 Recipe(
                     recipe_id=f"Recipe_Power_{generator_class}",
@@ -524,7 +571,7 @@ def build_power_recipes(
                     produced_in=[generator_name],
                     produced_in_classes=[generator_class],
                     duration_sec=60.0,
-                    outputs=[ingredient_with_rate(power_class, power_item, power_rate)],
+                    outputs=[ingredient_with_rate(member_class, member_item, power_rate)],
                     source_class=SYNTHETIC_POWER_SOURCE_CLASS,
                     source_file=source_file,
                 )
@@ -552,7 +599,7 @@ def build_power_recipes(
                 fuel_entry=fuel_entry,
                 fuel_class=fuel_class,
                 power_class=power_class,
-                power_item=power_item,
+                power_name=power_name,
                 power_rate=power_rate,
                 items=items,
                 source_file=source_file,
@@ -571,7 +618,7 @@ def build_fueled_power_recipe(
     fuel_entry: dict[str, Any],
     fuel_class: str,
     power_class: str,
-    power_item: ItemInfo,
+    power_name: str,
     power_rate: float,
     items: dict[str, ItemInfo],
     source_file: str,
@@ -585,6 +632,12 @@ def build_fueled_power_recipe(
     if fuel_per_min <= 0:
         return None
 
+    member_power_class = power_member_class(power_class, fuel_class)
+    member_power_item = ensure_power_member_item(
+        items,
+        member_power_class,
+        power_member_display_name(power_name, fuel_item.display_name),
+    )
     inputs = [ingredient_with_rate(fuel_class, fuel_item, fuel_per_min)]
 
     supplemental_class = clean_class_ref(fuel_entry.get("mSupplementalResourceClass"))
@@ -594,7 +647,7 @@ def build_fueled_power_recipe(
         if supplemental_item is not None and supplemental_rate > 0:
             inputs.append(ingredient_with_rate(supplemental_class, supplemental_item, supplemental_rate))
 
-    power_output = ingredient_with_rate(power_class, power_item, power_rate)
+    power_output = ingredient_with_rate(member_power_class, member_power_item, power_rate)
     outputs = [power_output]
     byproduct = byproduct_ingredient(generator_obj, fuel_entry, fuel_item, fuel_per_min, items)
     if byproduct is not None:
@@ -747,9 +800,9 @@ def build_sheets(
     docs_path: Path,
     args: argparse.Namespace,
 ) -> list[Worksheet]:
-    wide_rows = build_recipes_wide_rows(recipes)
+    material_recipe_sheet = build_material_recipe_sheet(recipes, items)
     if args.wide_only:
-        return [Worksheet("RecipesWide", wide_rows)]
+        return [material_recipe_sheet]
 
     unique_items = sorted(
         {info.class_name: info for info in items.values()}.values(),
@@ -757,11 +810,9 @@ def build_sheets(
     )
     sheets = [
         Worksheet("README", build_readme_rows(recipes, items, docs_path, args)),
-        Worksheet("RecipesWide", wide_rows),
-        Worksheet("RecipeSummary", build_recipe_summary_rows(recipes)),
-        build_replacement_group_sheet(recipes),
+        material_recipe_sheet,
+        Worksheet("PowerGroup", build_power_group_rows(recipes, items)),
         Worksheet("Items", build_items_rows(unique_items)),
-        Worksheet("RawMaterials", build_raw_material_rows(recipes, items)),
         Worksheet("RecipesLong", build_recipes_long_rows(recipes)),
         Worksheet("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
         Worksheet("RecipeOutputs", build_recipe_io_rows(recipes, input_side=False)),
@@ -771,94 +822,85 @@ def build_sheets(
     return sheets
 
 
-def build_recipes_wide_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
-    max_inputs = max((len(recipe.inputs) for recipe in recipes), default=0)
-    max_outputs = max((len(recipe.outputs) for recipe in recipes), default=0)
-
-    headers: list[str] = [
-        "RecipeID",
-        "RecipeName",
-        "IsAlternate",
-        "ProducedIn",
-        "DurationSec",
-        "InputsText",
-        "OutputsText",
-    ]
-    for index in range(1, max_inputs + 1):
-        headers.extend([f"Input{index}Item", f"Input{index}Amount", f"Input{index}Unit", f"Input{index}PerMin"])
-    for index in range(1, max_outputs + 1):
-        headers.extend([f"Output{index}Item", f"Output{index}Amount", f"Output{index}Unit", f"Output{index}PerMin"])
-    headers.extend(["SourceClass", "SourceFile"])
-
-    rows: list[list[Any]] = [headers]
-    for recipe in recipes:
-        row: list[Any] = [
-            recipe.recipe_id,
-            recipe.recipe_name,
-            recipe.is_alternate,
-            ", ".join(recipe.produced_in),
-            clean_number(recipe.duration_sec),
-            format_io_text(recipe.inputs),
-            format_io_text(recipe.outputs),
-        ]
-        for index in range(max_inputs):
-            row.extend(io_wide_cells(recipe.inputs[index] if index < len(recipe.inputs) else None))
-        for index in range(max_outputs):
-            row.extend(io_wide_cells(recipe.outputs[index] if index < len(recipe.outputs) else None))
-        row.extend([recipe.source_class, recipe.source_file])
-        rows.append(row)
-    return rows
-
-
-def build_recipe_summary_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
-    rows = [["配方名字", "输入材料", "输出材料"]]
-    for recipe in recipes:
-        rows.append(
-            [
-                recipe.recipe_name,
-                format_summary_io_text(recipe.inputs),
-                format_summary_io_text(recipe.outputs),
-            ]
-        )
-    return rows
-
-
-def build_replacement_group_sheet(recipes: Sequence[Recipe]) -> Worksheet:
+def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, ItemInfo]) -> Worksheet:
     merges: list[MergeRange] = []
-    groups: dict[str, list[Recipe]] = {}
-
+    output_classes = {
+        output.item_class
+        for recipe in recipes
+        for output in recipe.outputs
+    }
+    recipes_by_output: dict[str, list[Recipe]] = {}
     for recipe in recipes:
-        primary_output = primary_output_class(recipe)
-        if not primary_output:
-            continue
-        groups.setdefault(primary_output, []).append(recipe)
+        seen_outputs: set[str] = set()
+        for output in recipe.outputs:
+            if output.item_class in seen_outputs:
+                continue
+            output_item = item_info_for_class(output.item_class, items)
+            if output_item is None or is_building_item(output_item):
+                continue
+            recipes_by_output.setdefault(output.item_class, []).append(recipe)
+            seen_outputs.add(output.item_class)
 
-    grouped_recipes = [
-        sorted(group, key=replacement_group_recipe_sort_key)
-        for group in groups.values()
-        if len(group) > 1
+    materials = [
+        item
+        for item in {info.class_name: info for info in items.values()}.values()
+        if not is_building_item(item)
     ]
-    grouped_recipes.sort(key=lambda group: (group[0].outputs[0].item_name.lower(), group[0].outputs[0].item_class))
+    materials.sort(key=lambda item: (material_category_sort_key(material_category(item.class_name, item, output_classes)), item.display_name.lower(), item.class_name))
 
-    grouped_recipe_values = [recipe for group in grouped_recipes for recipe in group]
-    max_inputs = max((len(recipe.inputs) for recipe in grouped_recipe_values), default=0)
-    max_outputs = max((len(recipe.outputs) for recipe in grouped_recipe_values), default=0)
+    recipe_values = [
+        recipe
+        for material_recipes in recipes_by_output.values()
+        for recipe in material_recipes
+    ]
+    max_inputs = max((len(recipe.inputs) for recipe in recipe_values), default=0)
+    max_outputs = max((len(recipe.outputs) for recipe in recipe_values), default=0)
     rows: list[list[Any]] = [
         [
-            "产出材料名称",
-            "配方名称",
-            *[StyledCell(f"消耗{index}", STYLE_INPUT) for index in range(1, max_inputs + 1)],
-            *[StyledCell(f"产出{index}", STYLE_OUTPUT) for index in range(1, max_outputs + 1)],
+            "MaterialClassName",
+            "MaterialName",
+            "MaterialCategory",
+            "RecipeName",
+            "RecipeCategory",
+            "RecipeFlag",
+            *[StyledCell(f"Input{index}", STYLE_INPUT) for index in range(1, max_inputs + 1)],
+            *[StyledCell(f"Output{index}", STYLE_OUTPUT) for index in range(1, max_outputs + 1)],
+            "RecipeID",
         ]
     ]
 
-    for group in grouped_recipes:
+    for item in materials:
         start_row = len(rows) + 1
-        output_name = group[0].outputs[0].item_name
-        for index, recipe in enumerate(group):
+        category = material_category(item.class_name, item, output_classes)
+        material_recipes = sorted(
+            unique_recipes(recipes_by_output.get(item.class_name, [])),
+            key=lambda recipe: material_recipe_sort_key(recipe, item.class_name),
+        )
+        if not material_recipes:
+            rows.append(
+                [
+                    item.class_name,
+                    item.display_name,
+                    category,
+                    "None",
+                    "",
+                    "",
+                    *[StyledCell("", STYLE_INPUT) for _ in range(max_inputs)],
+                    *[StyledCell("", STYLE_OUTPUT) for _ in range(max_outputs)],
+                    "None",
+                ]
+            )
+            continue
+
+        recipe_categories = material_recipe_categories(item.class_name, category, material_recipes)
+        for recipe_index, recipe in enumerate(material_recipes):
             row: list[Any] = [
-                output_name if index == 0 else None,
+                item.class_name if recipe_index == 0 else None,
+                item.display_name if recipe_index == 0 else None,
+                category if recipe_index == 0 else None,
                 recipe.recipe_name,
+                recipe_categories.get(recipe.recipe_id, RECIPE_CATEGORY_UNUSABLE),
+                recipe_flag_text(recipe, item.class_name),
             ]
             for input_index in range(max_inputs):
                 row.append(
@@ -872,14 +914,158 @@ def build_replacement_group_sheet(recipes: Sequence[Recipe]) -> Worksheet:
                     if output_index < len(recipe.outputs)
                     else StyledCell("", STYLE_OUTPUT)
                 )
-            rows.append(
-                row
-            )
+            row.append(recipe.recipe_id)
+            rows.append(row)
+
         end_row = len(rows)
         if end_row > start_row:
-            merges.append(MergeRange(start_row, 1, end_row, 1))
+            for column in range(1, 4):
+                merges.append(MergeRange(start_row, column, end_row, column))
 
-    return Worksheet("ReplacementGroup", rows, merges)
+    return Worksheet("MaterialRecipe", rows, merges)
+
+
+def unique_recipes(recipes: Sequence[Recipe]) -> list[Recipe]:
+    result: list[Recipe] = []
+    seen: set[str] = set()
+    for recipe in recipes:
+        if recipe.recipe_id in seen:
+            continue
+        result.append(recipe)
+        seen.add(recipe.recipe_id)
+    return result
+
+
+def material_recipe_sort_key(recipe: Recipe, material_class: str) -> tuple[int, int, int, str, str]:
+    relation_rank = 0 if primary_output_class(recipe) == material_class else 1
+    base_rank, nuclear_rank, name, recipe_id = replacement_group_recipe_sort_key(recipe)
+    return (relation_rank, base_rank, nuclear_rank, name, recipe_id)
+
+
+def material_category(item_class: str, item: ItemInfo, output_classes: set[str]) -> str:
+    if is_power_item(item):
+        return MATERIAL_CATEGORY_POWER
+    if raw_material_reason(item_class, item, output_classes):
+        return MATERIAL_CATEGORY_RAW
+    return MATERIAL_CATEGORY_NORMAL
+
+
+def material_category_sort_key(category: str) -> int:
+    order = {
+        MATERIAL_CATEGORY_RAW: 0,
+        MATERIAL_CATEGORY_NORMAL: 1,
+        MATERIAL_CATEGORY_POWER: 2,
+    }
+    return order.get(category, 99)
+
+
+def material_recipe_categories(material_class: str, material_category_name: str, recipes: Sequence[Recipe]) -> dict[str, str]:
+    categories: dict[str, str] = {}
+    usable_primary = [
+        recipe
+        for recipe in recipes
+        if primary_output_class(recipe) == material_class and not is_unpackage_recipe(recipe)
+    ]
+    base_recipe_ids: set[str] = set()
+    if material_category_name != MATERIAL_CATEGORY_RAW:
+        base_recipe_ids = {
+            recipe.recipe_id
+            for recipe in usable_primary
+            if not is_alternate_recipe_name(recipe)
+        }
+        if not base_recipe_ids and usable_primary:
+            base_recipe_ids.add(usable_primary[0].recipe_id)
+
+    for recipe in recipes:
+        if is_unpackage_recipe(recipe) or primary_output_class(recipe) != material_class:
+            categories[recipe.recipe_id] = RECIPE_CATEGORY_UNUSABLE
+        elif recipe.recipe_id in base_recipe_ids:
+            categories[recipe.recipe_id] = RECIPE_CATEGORY_BASE
+        else:
+            categories[recipe.recipe_id] = RECIPE_CATEGORY_REPLACEMENT
+    return categories
+
+
+def recipe_flag_text(recipe: Recipe, material_class: str) -> str:
+    flags: list[str] = []
+    flags.append(RECIPE_FLAG_PRIMARY if primary_output_class(recipe) == material_class else RECIPE_FLAG_BYPRODUCT)
+    package_flag = package_recipe_flag(recipe)
+    if package_flag:
+        flags.append(package_flag)
+    if is_power_recipe(recipe):
+        flags.append(RECIPE_FLAG_POWER)
+    return "|".join(flags)
+
+
+def is_unpackage_recipe(recipe: Recipe) -> bool:
+    return package_recipe_flag(recipe) == RECIPE_FLAG_UNPACKAGED
+
+
+def is_alternate_recipe_name(recipe: Recipe) -> bool:
+    return recipe.recipe_name.strip().lower().startswith("alternate")
+
+
+def package_recipe_flag(recipe: Recipe) -> str:
+    name = recipe.recipe_name.strip().lower()
+    recipe_id = recipe.recipe_id.strip().lower()
+    if name.startswith("unpackage ") or "unpackage" in recipe_id:
+        return RECIPE_FLAG_UNPACKAGED
+    if name.startswith("packaged ") or recipe_id.startswith("recipe_packaged"):
+        return RECIPE_FLAG_PACKAGED
+    return ""
+
+
+def is_power_recipe(recipe: Recipe) -> bool:
+    return recipe.recipe_id.startswith("Recipe_Power_") or recipe.source_class == SYNTHETIC_POWER_SOURCE_CLASS
+
+
+def is_power_item(item: ItemInfo) -> bool:
+    return item.form == "RF_POWER" or item.native_class in {SYNTHETIC_POWER_NATIVE_CLASS, SYNTHETIC_POWER_GROUP_NATIVE_CLASS}
+
+
+def is_building_item(item: ItemInfo) -> bool:
+    return "FGBuildingDescriptor" in item.native_class
+
+
+def build_power_group_rows(recipes: Sequence[Recipe], items: dict[str, ItemInfo]) -> list[list[Any]]:
+    rows = [["GroupClass", "GroupName", "MemberClass", "MemberName", "GeneratorClass", "GeneratorName", "FuelClass", "FuelName"]]
+    for recipe in recipes:
+        generator_class = recipe.produced_in_classes[0] if recipe.produced_in_classes else ""
+        power_definition = POWER_OUTPUT_BY_GENERATOR.get(generator_class)
+        if not power_definition:
+            continue
+
+        group_class, power_name = power_definition
+        group_item = item_info_for_class(group_class, items)
+        group_name = group_item.display_name if group_item else power_group_display_name(power_name)
+        fuel_class = power_recipe_fuel_class(recipe, generator_class)
+        fuel_name = item_display_name(fuel_class, items) if fuel_class else ""
+        generator_name = recipe.produced_in[0] if recipe.produced_in else item_display_name(generator_class, items)
+
+        for output in recipe.outputs:
+            output_item = item_info_for_class(output.item_class, items)
+            if output_item is None or output_item.native_class != SYNTHETIC_POWER_NATIVE_CLASS:
+                continue
+            rows.append(
+                [
+                    group_class,
+                    group_name,
+                    output.item_class,
+                    output.item_name,
+                    generator_class,
+                    generator_name,
+                    fuel_class,
+                    fuel_name,
+                ]
+            )
+    return rows
+
+
+def power_recipe_fuel_class(recipe: Recipe, generator_class: str) -> str:
+    prefix = f"Recipe_Power_{generator_class}_"
+    if recipe.recipe_id.startswith(prefix):
+        return recipe.recipe_id.removeprefix(prefix)
+    return ""
 
 
 def replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, int, str, str]:
@@ -905,16 +1091,6 @@ def primary_output_class(recipe: Recipe) -> str:
     return recipe.outputs[0].item_class
 
 
-def format_recipe_formula(recipe: Recipe) -> str:
-    return f"{format_formula_side(recipe.inputs)} = {format_formula_side(recipe.outputs)}"
-
-
-def format_formula_side(items: Sequence[Ingredient]) -> str:
-    if not items:
-        return "无"
-    return " + ".join(ingredient_cell_text(item) for item in items)
-
-
 def ingredient_cell_text(item: Ingredient) -> str:
     return f"{item.item_name}（{format_number(clean_number(item.per_min))}）"
 
@@ -927,8 +1103,8 @@ def build_readme_rows(
 ) -> list[list[Any]]:
     return [
         ["Key", "Value"],
-        ["Purpose", "Export real Docs.json recipes to a human-readable wide workbook."],
-        ["MainSheet", "RecipesWide"],
+        ["Purpose", "Export real Docs.json recipes to a planning workbook."],
+        ["MainSheet", "MaterialRecipe"],
         ["ConfigFile", str(args.config)],
         ["NoGeneratedExtractionRules", True],
         ["FilteringRule", "Only extraction/raw-resource gathering recipes are excluded; all other real Docs recipes are included."],
@@ -954,28 +1130,6 @@ def build_items_rows(items: Sequence[ItemInfo]) -> list[list[Any]]:
                 clean_number(item.energy_value),
             ]
         )
-    return rows
-
-
-def build_raw_material_rows(recipes: Sequence[Recipe], items: dict[str, ItemInfo]) -> list[list[Any]]:
-    output_classes = {
-        output.item_class
-        for recipe in recipes
-        for output in recipe.outputs
-    }
-    used_classes = {
-        ingredient.item_class
-        for recipe in recipes
-        for ingredient in (*recipe.inputs, *recipe.outputs)
-    }
-
-    rows = [["ItemClass", "ItemName", "Reason"]]
-    for item_class in sorted(used_classes, key=lambda value: (item_display_name(value, items).lower(), value)):
-        item = item_info_for_class(item_class, items)
-        reason = raw_material_reason(item_class, item, output_classes)
-        if not reason:
-            continue
-        rows.append([item_class, item_display_name(item_class, items), reason])
     return rows
 
 
@@ -1074,7 +1228,7 @@ def build_version_rows(docs_path: Path, args: argparse.Namespace) -> list[list[A
         ["Lang", args.lang],
         ["RecipeFilter", "exclude extraction/raw-resource gathering recipes only"],
         ["GeneratedPowerRecipes", True],
-        ["WideOnly", args.wide_only],
+        ["MaterialRecipeOnly", args.wide_only],
         ["DebugJson", args.debug_json],
     ]
 
@@ -1097,20 +1251,6 @@ def build_validation_rows(recipes: Sequence[Recipe], items: Sequence[ItemInfo]) 
         ["MaxInputCount", max_inputs],
         ["MaxOutputCount", max_outputs],
     ]
-
-
-def io_wide_cells(item: Ingredient | None) -> list[Any]:
-    if item is None:
-        return ["", "", "", ""]
-    return [item.item_name, clean_number(item.amount), item.unit, clean_number(item.per_min)]
-
-
-def format_io_text(items: Sequence[Ingredient]) -> str:
-    return "; ".join(f"{format_number(item.amount)} {item.unit} {item.item_name}" for item in items)
-
-
-def format_summary_io_text(items: Sequence[Ingredient]) -> str:
-    return "|".join(f"{item.item_name}（{format_number(clean_number(item.per_min))}）" for item in items)
 
 
 def write_debug_json(out_path: Path, recipes: Sequence[Recipe], items: dict[str, ItemInfo], docs_path: Path) -> None:
@@ -1321,7 +1461,7 @@ def worksheet_xml(rows: Sequence[Sequence[Any]], merges: Sequence[MergeRange] | 
             parts.append(cell_xml(row_index, col_index, value))
         parts.append("</row>")
     parts.append("</sheetData>")
-    if row_count > 1 and col_count > 0 and not merges:
+    if row_count > 1 and col_count > 0:
         parts.append(f'<autoFilter ref="A1:{column_name(col_count)}{row_count}"/>')
     if merges:
         parts.append(f'<mergeCells count="{len(merges)}">')

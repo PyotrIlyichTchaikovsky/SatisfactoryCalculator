@@ -194,8 +194,10 @@ h2 {
   z-index: 20;
   display: none;
   top: calc(100% + 4px);
-  right: 0;
   left: 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(760px, calc(100vw - 32px));
   max-height: 292px;
   overflow-y: auto;
   border: 1px solid var(--border-strong);
@@ -232,6 +234,7 @@ h2 {
 }
 
 .suggestion-name {
+  max-width: 620px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -799,6 +802,26 @@ h2 {
 
 .merged-table tr:last-child td {
   border-bottom: 0;
+}
+
+.table-switch-recipe-button {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  margin-right: 8px;
+  border: 1px solid rgba(15, 118, 110, 0.34);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #f0fdfa;
+  color: #0f766e;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.table-switch-recipe-button:hover {
+  border-color: #0f766e;
+  background: #ccfbf1;
 }
 
 .number-cell {

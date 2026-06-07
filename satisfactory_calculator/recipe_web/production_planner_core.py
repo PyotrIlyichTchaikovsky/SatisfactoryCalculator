@@ -16,17 +16,23 @@ except ImportError:  # pragma: no cover - handled at runtime with a clear planne
     linprog = None
 
 
-DEFAULT_EXCEL_PATH = Path(__file__).resolve().parent.parent / "raw_data" / "Satisfactory_Recipes_Wide.xlsx"
+DEFAULT_EXCEL_PATH = Path(__file__).resolve().parent.parent / "raw_data" / "SatisfactoryData.xlsx"
 
 _MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _PACKAGE_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _COLUMN_RE = re.compile(r"[A-Z]+")
+_CELL_REF_RE = re.compile(r"([A-Z]+)(\d+)")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 _LP_EPS = 1e-7
 _RESULT_EPS = 1e-5
 _RECIPE_MODE_BASE = "base"
 _RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency"
+_DIRECT_RAW_RECIPE_ID = "__raw__"
+_MATERIAL_CATEGORY_RAW = "原始材料"
+_RECIPE_CATEGORY_BASE = "基础配方"
+_RECIPE_CATEGORY_REPLACEMENT = "可替换配方"
+_RECIPE_CATEGORY_UNUSABLE = "不可使用配方"
 
 
 class PlannerError(ValueError):
@@ -74,6 +80,15 @@ class ReplacementGroup:
     item_class: str
     item_name: str
     recipe_ids: tuple[str, ...]
+    base_recipe_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PowerGroup:
+    group_class: str
+    group_name: str
+    member_classes: tuple[str, ...]
+    member_names: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -93,6 +108,7 @@ class ProductionPlanner:
         recipes: tuple[Recipe, ...],
         raw_source_classes: set[str],
         replacement_groups: tuple[ReplacementGroup, ...],
+        power_groups: tuple[PowerGroup, ...],
         version_info: dict[str, Any],
     ) -> None:
         self.excel_path = excel_path
@@ -103,6 +119,25 @@ class ProductionPlanner:
         self.recipes_by_output = self._build_recipes_by_output(recipes)
         self.replacement_groups = replacement_groups
         self.replacement_groups_by_item = {group.item_class: group for group in replacement_groups}
+        self.power_groups = power_groups
+        self.power_groups_by_class = {group.group_class: group for group in power_groups}
+        self.power_groups_by_member = {
+            member_class: group
+            for group in power_groups
+            for member_class in group.member_classes
+        }
+        for group in power_groups:
+            existing_group_item = self.items.get(group.group_class)
+            self.items[group.group_class] = (
+                Item(
+                    class_name=group.group_class,
+                    name=existing_group_item.name if existing_group_item else group.group_name,
+                    unit=(existing_group_item.unit if existing_group_item else "MW") or "MW",
+                    form=(existing_group_item.form if existing_group_item else "RF_POWER") or "RF_POWER",
+                    is_raw_resource=False,
+                    producible=True,
+                )
+            )
         self.primary_output_by_recipe = {
             recipe.recipe_id: recipe.outputs[0].item_class
             for recipe in recipes
@@ -128,30 +163,34 @@ class ProductionPlanner:
     def from_excel(cls, excel_path: str | Path = DEFAULT_EXCEL_PATH) -> "ProductionPlanner":
         path = Path(excel_path).expanduser().resolve()
         sheets = _load_xlsx_sheets(path)
-        required_sheets = {"Items", "RawMaterials", "RecipesLong", "RecipeInputs", "RecipeOutputs"}
+        required_sheets = {"Items", "MaterialRecipe", "RecipesLong", "RecipeInputs", "RecipeOutputs"}
         missing = sorted(required_sheets - set(sheets))
         if missing:
             raise PlannerError(f"Excel workbook is missing required sheets: {', '.join(missing)}")
 
         item_infos = _load_item_infos(sheets["Items"])
-        raw_source_classes = _load_raw_material_classes(sheets["RawMaterials"])
+        material_recipe_rows = sheets["MaterialRecipe"]
+        material_item_names = _load_material_recipe_item_names(material_recipe_rows)
+        raw_source_classes = _load_material_recipe_raw_classes(material_recipe_rows)
         inputs_by_recipe, input_item_names = _load_recipe_io(sheets["RecipeInputs"])
         outputs_by_recipe, output_item_names = _load_recipe_io(sheets["RecipeOutputs"])
         recipes = _load_recipes(sheets["RecipesLong"], inputs_by_recipe, outputs_by_recipe)
         version_info = _load_key_value_sheet(sheets.get("VersionInfo", []))
-        replacement_groups = _load_replacement_groups(sheets.get("ReplacementGroup", []), recipes)
+        replacement_groups = _load_material_recipe_replacement_groups(material_recipe_rows, recipes)
+        power_groups = _load_power_groups(sheets.get("PowerGroup", []))
 
-        used_classes = set(input_item_names) | set(output_item_names)
-        producible_classes = set(output_item_names)
-        item_names = {**input_item_names, **output_item_names}
+        used_classes = set(material_item_names)
+        producible_classes = set(output_item_names) & used_classes
+        item_names = {**input_item_names, **output_item_names, **material_item_names}
         items = _build_items(used_classes, producible_classes, item_names, item_infos)
-        return cls(path, items, recipes, raw_source_classes, replacement_groups, version_info)
+        return cls(path, items, recipes, raw_source_classes, replacement_groups, power_groups, version_info)
 
     def summary(self) -> dict[str, Any]:
         return {
             "recipeCount": len(self.recipes),
             "itemCount": len(self.items),
             "rawMaterialCount": len(self.raw_source_classes),
+            "powerGroupCount": len(self.power_groups),
             "excelPath": str(self.excel_path),
             "sourceDocsJson": self.version_info.get("SourceDocsJson", ""),
             "generatedAt": self.version_info.get("GeneratedAt", ""),
@@ -169,23 +208,30 @@ class ProductionPlanner:
         parsed_targets = self._parse_targets(targets)
         parsed_recipe_mode = self._parse_recipe_mode(recipe_mode)
         recipe_selection_overrides = self._parse_recipe_selections(selected_recipes)
+        disabled_raw_source_classes = self._disabled_raw_source_classes(recipe_selection_overrides)
         active_recipe_ids, base_selections = self._active_recipe_selection(
             recipe_selection_overrides,
             parsed_recipe_mode,
         )
-        solution = self._solve_linear_plan(parsed_targets, active_recipe_ids)
+        solution = self._solve_linear_plan(parsed_targets, active_recipe_ids, disabled_raw_source_classes)
         effective_selections = self._effective_recipe_selection(
             recipe_selection_overrides,
             base_selections,
             solution["recipeRuns"],
             parsed_recipe_mode,
         )
+        self._attach_raw_recipe_switch_options(solution, effective_selections)
 
         return {
             "targets": [
-                {"item": self._item_to_dict(target["item"]), "rate": target["rate"]}
+                {
+                    "item": self._item_to_dict(target["item"]),
+                    "rate": target["rate"],
+                    "kind": "powerGroup" if target.get("powerGroup") else "item",
+                }
                 for target in parsed_targets
             ],
+            "targetAllocations": solution["targetAllocations"],
             "recipeMode": parsed_recipe_mode,
             "selectedRecipes": effective_selections,
             "roots": solution["layers"],
@@ -222,7 +268,9 @@ class ProductionPlanner:
             item_class = str(raw_item_class or "").strip()
             recipe_id = str(raw_recipe_id or "").strip()
             group = self.replacement_groups_by_item.get(item_class)
-            if group and recipe_id in group.recipe_ids:
+            if group and recipe_id == _DIRECT_RAW_RECIPE_ID and item_class in self.raw_source_classes:
+                selections[item_class] = recipe_id
+            elif group and recipe_id in group.recipe_ids:
                 selections[item_class] = recipe_id
         return selections
 
@@ -234,15 +282,32 @@ class ProductionPlanner:
         active_recipe_ids: set[str] = set()
         base_selections: dict[str, str] = {}
         for group in self.replacement_groups:
-            selected_recipe_id = selected_recipes.get(group.item_class) or group.recipe_ids[0]
+            selected_recipe_id = selected_recipes.get(group.item_class)
+            if selected_recipe_id == _DIRECT_RAW_RECIPE_ID and group.item_class in self.raw_source_classes:
+                base_selections[group.item_class] = selected_recipe_id
+                continue
             if selected_recipe_id not in group.recipe_ids:
-                selected_recipe_id = group.recipe_ids[0]
-            if recipe_mode == _RECIPE_MODE_BEST_EFFICIENCY and group.item_class not in selected_recipes:
-                active_recipe_ids.update(group.recipe_ids)
-            else:
+                selected_recipe_id = ""
+            if selected_recipe_id:
                 active_recipe_ids.add(selected_recipe_id)
-            base_selections[group.item_class] = selected_recipe_id
+                base_selections[group.item_class] = selected_recipe_id
+            elif recipe_mode == _RECIPE_MODE_BEST_EFFICIENCY:
+                active_recipe_ids.update(group.recipe_ids)
+                base_selections[group.item_class] = group.recipe_ids[0]
+            else:
+                base_recipe_ids = group.base_recipe_ids
+                if not base_recipe_ids:
+                    continue
+                active_recipe_ids.update(base_recipe_ids)
+                base_selections[group.item_class] = base_recipe_ids[0]
         return active_recipe_ids, base_selections
+
+    def _disabled_raw_source_classes(self, selected_recipes: dict[str, str]) -> set[str]:
+        return {
+            item_class
+            for item_class, recipe_id in selected_recipes.items()
+            if item_class in self.raw_source_classes and recipe_id != _DIRECT_RAW_RECIPE_ID
+        }
 
     def _effective_recipe_selection(
         self,
@@ -261,6 +326,9 @@ class ProductionPlanner:
         effective_selections: dict[str, str] = {}
         for group in self.replacement_groups:
             selected_recipe_id = selected_recipes.get(group.item_class)
+            if selected_recipe_id == _DIRECT_RAW_RECIPE_ID and group.item_class in self.raw_source_classes:
+                effective_selections[group.item_class] = selected_recipe_id
+                continue
             if selected_recipe_id in group.recipe_ids:
                 effective_selections[group.item_class] = selected_recipe_id
                 continue
@@ -275,7 +343,7 @@ class ProductionPlanner:
             effective_selections[group.item_class] = (
                 best_recipe_id
                 if used_scales.get(best_recipe_id, 0.0) > _RESULT_EPS
-                else group.recipe_ids[0]
+                else (_DIRECT_RAW_RECIPE_ID if group.item_class in self.raw_source_classes else group.recipe_ids[0])
             )
         return effective_selections
 
@@ -285,13 +353,14 @@ class ProductionPlanner:
             if not isinstance(target, dict):
                 raise PlannerError(f"Target #{index} must be an object.")
             item = self._resolve_item(target.get("itemClass") or target.get("itemName") or target.get("name"))
+            power_group = self.power_groups_by_class.get(item.class_name)
             try:
                 rate = float(target.get("rate"))
             except (TypeError, ValueError) as exc:
                 raise PlannerError(f"Target #{index} has an invalid rate.") from exc
             if rate <= 0:
                 raise PlannerError(f"Target #{index} rate must be greater than 0.")
-            parsed.append({"item": item, "rate": rate})
+            parsed.append({"item": item, "rate": rate, "powerGroup": power_group})
         if not parsed:
             raise PlannerError("At least one production target is required.")
         return parsed
@@ -308,12 +377,17 @@ class ProductionPlanner:
         for item in self.items_list:
             if _normalize(item.name) == normalized or _compact(item.name) == compacted:
                 return item
+        for group in self.power_groups:
+            base_name = group.group_name.removesuffix(" (Any)")
+            if _normalize(base_name) == normalized or _compact(base_name) == compacted:
+                return self.items[group.group_class]
         raise PlannerError(f"Unknown item: {text}")
 
     def _solve_linear_plan(
         self,
         parsed_targets: list[dict[str, Any]],
         active_recipe_ids: set[str],
+        disabled_raw_source_classes: set[str] | None = None,
     ) -> dict[str, Any]:
         if linprog is None:
             raise PlannerError(
@@ -326,7 +400,8 @@ class ProductionPlanner:
             recipe for recipe in self.recipes if recipe.recipe_id in active_recipe_ids
         )
         material_classes = self._plan_material_classes(parsed_targets, candidate_recipes)
-        raw_classes = sorted(self.raw_source_classes & set(material_classes))
+        disabled_raw_source_classes = disabled_raw_source_classes or set()
+        raw_classes = sorted((self.raw_source_classes - disabled_raw_source_classes) & set(material_classes))
         raw_index = {item_class: index for index, item_class in enumerate(raw_classes)}
         material_index = {item_class: index for index, item_class in enumerate(material_classes)}
 
@@ -335,7 +410,11 @@ class ProductionPlanner:
         net_matrix = [[0.0 for _ in range(variable_count)] for _ in material_classes]
         demand = [0.0 for _ in material_classes]
 
+        power_group_targets: list[dict[str, Any]] = []
         for target in parsed_targets:
+            if target.get("powerGroup"):
+                power_group_targets.append(target)
+                continue
             demand[material_index[target["item"].class_name]] += target["rate"]
 
         for recipe_index, recipe in enumerate(candidate_recipes):
@@ -357,6 +436,19 @@ class ProductionPlanner:
         ]
         a_ub = [[-value for value in row] for row in net_matrix]
         b_ub = [-value for value in demand]
+        for target in power_group_targets:
+            group = target["powerGroup"]
+            group_row = [0.0 for _ in range(variable_count)]
+            for member_class in group.member_classes:
+                row_index = material_index.get(member_class)
+                if row_index is None:
+                    continue
+                for variable_index, value in enumerate(net_matrix[row_index]):
+                    group_row[variable_index] += value
+            if not any(abs(value) > _LP_EPS for value in group_row):
+                raise PlannerError(f"Power group has no active member recipes: {group.group_name}")
+            a_ub.append([-value for value in group_row])
+            b_ub.append(-target["rate"])
         bounds = [(0.0, None) for _ in range(variable_count)]
 
         first = linprog(raw_costs, A_ub=a_ub, b_ub=b_ub, bounds=bounds, method="highs")
@@ -384,8 +476,10 @@ class ProductionPlanner:
             for item_class, index in raw_index.items()
             if values[recipe_count + index] > _RESULT_EPS
         }
-        material_balances = self._build_material_balances(material_classes, parsed_targets, recipe_runs, raw_supplies)
-        layers = self._build_plan_layers(parsed_targets, recipe_runs, raw_supplies)
+        raw_supplies = self._sanitize_raw_supplies(raw_supplies, parsed_targets, recipe_runs)
+        target_allocations = self._build_target_allocations(parsed_targets, recipe_runs, raw_supplies)
+        material_balances = self._build_material_balances(material_classes, target_allocations, recipe_runs, raw_supplies)
+        layers = self._build_plan_layers(target_allocations, recipe_runs, raw_supplies)
         totals = self._build_total_rows(material_balances)
         raw_totals = [
             {
@@ -400,6 +494,7 @@ class ProductionPlanner:
 
         return {
             "recipeRuns": recipe_runs,
+            "targetAllocations": target_allocations,
             "materialBalances": material_balances,
             "rawTotals": raw_totals,
             "layers": layers,
@@ -419,7 +514,12 @@ class ProductionPlanner:
             for ingredient in (*recipe.inputs, *recipe.outputs)
             for item_class in [ingredient.item_class]
         }
-        classes.update(target["item"].class_name for target in parsed_targets)
+        for target in parsed_targets:
+            group = target.get("powerGroup")
+            if group:
+                classes.update(group.member_classes)
+            else:
+                classes.add(target["item"].class_name)
         return sorted(classes)
 
     def _build_recipe_runs(self, recipes: tuple[Recipe, ...], recipe_scales: list[float]) -> list[dict[str, Any]]:
@@ -445,10 +545,134 @@ class ProductionPlanner:
         runs.sort(key=lambda run: (run["recipe"]["name"].lower(), run["recipe"]["id"]))
         return runs
 
+    def _build_target_allocations(
+        self,
+        parsed_targets: list[dict[str, Any]],
+        recipe_runs: list[dict[str, Any]],
+        raw_supplies: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        available: dict[str, float] = defaultdict(float)
+        for item_class, rate in raw_supplies.items():
+            available[item_class] += float(rate)
+        for run in recipe_runs:
+            for output in run["outputs"]:
+                available[output["item"]["className"]] += float(output["rate"])
+            for input_item in run["inputs"]:
+                available[input_item["item"]["className"]] -= float(input_item["rate"])
+
+        allocations: list[dict[str, Any]] = []
+        for target in parsed_targets:
+            if target.get("powerGroup"):
+                continue
+            item = target["item"]
+            rate = float(target["rate"])
+            available[item.class_name] -= rate
+            allocations.append(
+                {
+                    "targetItem": self._item_to_dict(item),
+                    "item": self._item_to_dict(item),
+                    "rate": _clean_number(rate),
+                    "kind": "direct",
+                }
+            )
+
+        for target in parsed_targets:
+            group = target.get("powerGroup")
+            if not group:
+                continue
+            remaining = float(target["rate"])
+            allocation_start_index = len(allocations)
+            tolerance = max(_RESULT_EPS, abs(remaining) * 1e-6)
+            members = sorted(
+                group.member_classes,
+                key=lambda item_class: (
+                    -max(0.0, available.get(item_class, 0.0)),
+                    group.member_classes.index(item_class),
+                    self._item_for_class(item_class).name.lower(),
+                ),
+            )
+            for member_class in members:
+                if remaining <= _RESULT_EPS:
+                    break
+                member_available = max(0.0, available.get(member_class, 0.0))
+                used = min(remaining, member_available)
+                if used <= _RESULT_EPS:
+                    continue
+                available[member_class] -= used
+                remaining -= used
+                allocations.append(
+                    {
+                        "targetItem": self._item_to_dict(target["item"]),
+                        "item": self._item_to_dict(self._item_for_class(member_class)),
+                        "rate": _clean_number(used),
+                        "kind": "powerGroup",
+                    }
+                )
+
+            if 0 < remaining <= tolerance and len(allocations) > allocation_start_index:
+                allocations[-1]["rate"] = _clean_number(float(allocations[-1]["rate"]) + remaining)
+                remaining = 0.0
+
+            if remaining > tolerance and members:
+                member_class = members[0]
+                available[member_class] -= remaining
+                allocations.append(
+                    {
+                        "targetItem": self._item_to_dict(target["item"]),
+                        "item": self._item_to_dict(self._item_for_class(member_class)),
+                        "rate": _clean_number(remaining),
+                        "kind": "powerGroup",
+                    }
+                )
+        return allocations
+
+    def _sanitize_raw_supplies(
+        self,
+        raw_supplies: dict[str, float],
+        parsed_targets: list[dict[str, Any]],
+        recipe_runs: list[dict[str, Any]],
+    ) -> dict[str, float]:
+        if not raw_supplies:
+            return {}
+
+        consumed_classes = {
+            input_item["item"]["className"]
+            for run in recipe_runs
+            for input_item in run["inputs"]
+            if float(input_item.get("rate") or 0.0) > _RESULT_EPS
+        }
+        material_scales: dict[str, float] = defaultdict(float)
+        for run in recipe_runs:
+            for output in run["outputs"]:
+                item_class = output["item"]["className"]
+                material_scales[item_class] = max(material_scales[item_class], abs(float(output.get("rate") or 0.0)))
+            for input_item in run["inputs"]:
+                item_class = input_item["item"]["className"]
+                material_scales[item_class] = max(material_scales[item_class], abs(float(input_item.get("rate") or 0.0)))
+        target_classes = {
+            target["item"].class_name
+            for target in parsed_targets
+            if not target.get("powerGroup")
+        }
+        for target in parsed_targets:
+            if not target.get("powerGroup"):
+                material_scales[target["item"].class_name] = max(
+                    material_scales[target["item"].class_name],
+                    abs(float(target["rate"])),
+                )
+
+        cleaned: dict[str, float] = {}
+        for item_class, rate in raw_supplies.items():
+            if item_class not in consumed_classes and item_class not in target_classes:
+                continue
+            if rate > _display_noise_floor(material_scales.get(item_class, rate)):
+                cleaned[item_class] = rate
+        return cleaned
+
     def _build_material_balances(
         self,
         material_classes: list[str],
-        parsed_targets: list[dict[str, Any]],
+        target_allocations: list[dict[str, Any]],
         recipe_runs: list[dict[str, Any]],
         raw_supplies: dict[str, float],
     ) -> list[dict[str, Any]]:
@@ -467,8 +691,10 @@ class ProductionPlanner:
                 "consumers": set(),
             }
 
-        for target in parsed_targets:
-            balances[target["item"].class_name]["targetDemand"] += target["rate"]
+        for allocation in target_allocations:
+            item_class = allocation["item"]["className"]
+            if item_class in balances:
+                balances[item_class]["targetDemand"] += float(allocation["rate"])
 
         for run in recipe_runs:
             recipe_name = run["recipe"]["name"]
@@ -489,6 +715,14 @@ class ProductionPlanner:
                 - balance["consumed"]
                 - balance["targetDemand"]
             )
+            balance_scale = max(
+                abs(balance["produced"]),
+                abs(balance["consumed"]),
+                abs(balance["external"]),
+                abs(balance["targetDemand"]),
+            )
+            if abs(balance["surplus"]) <= _display_noise_floor(balance_scale):
+                balance["surplus"] = 0.0
             produced = _clean_number(balance["produced"])
             consumed = _clean_number(balance["consumed"])
             external = _clean_number(balance["external"])
@@ -515,13 +749,13 @@ class ProductionPlanner:
 
     def _build_plan_layers(
         self,
-        parsed_targets: list[dict[str, Any]],
+        target_allocations: list[dict[str, Any]],
         recipe_runs: list[dict[str, Any]],
         raw_supplies: dict[str, float],
     ) -> list[dict[str, Any]]:
         layers: list[dict[str, Any]] = []
         remaining = {run["id"]: run for run in recipe_runs}
-        demanded = {target["item"].class_name for target in parsed_targets}
+        demanded = {allocation["item"]["className"] for allocation in target_allocations}
         layer_index = 0
 
         while remaining and demanded:
@@ -624,6 +858,69 @@ class ProductionPlanner:
     def _is_terminal_raw(self, item: Item) -> bool:
         return item.class_name in self.raw_source_classes
 
+    def _attach_raw_recipe_switch_options(
+        self,
+        solution: dict[str, Any],
+        effective_selections: dict[str, str],
+    ) -> None:
+        for raw_total in solution.get("rawTotals", []):
+            self._annotate_raw_recipe_switch(raw_total, effective_selections, force_direct=True)
+        for layer in solution.get("layers", []):
+            if layer.get("kind") != "raw":
+                continue
+            for raw_item in layer.get("rawItems", []):
+                self._annotate_raw_recipe_switch(raw_item, effective_selections, force_direct=True)
+        for total in solution.get("totals", []):
+            if total.get("raw"):
+                self._annotate_raw_recipe_switch(total, effective_selections)
+
+    def _annotate_raw_recipe_switch(
+        self,
+        raw_entry: dict[str, Any],
+        effective_selections: dict[str, str],
+        force_direct: bool = False,
+    ) -> None:
+        item_class = str(raw_entry.get("item", {}).get("className") or "").strip()
+        if not item_class:
+            return
+        options = self._raw_replacement_options(item_class)
+        if not options:
+            return
+        raw_entry["selectedRecipeId"] = _DIRECT_RAW_RECIPE_ID if force_direct else effective_selections.get(item_class) or _DIRECT_RAW_RECIPE_ID
+        raw_entry["defaultRecipeId"] = _DIRECT_RAW_RECIPE_ID
+        raw_entry["replacementOptions"] = options
+
+    def _raw_replacement_options(self, item_class: str) -> list[dict[str, Any]]:
+        if item_class not in self.raw_source_classes:
+            return []
+        group = self.replacement_groups_by_item.get(item_class)
+        if not group or not group.recipe_ids:
+            return []
+        return [
+            self._direct_raw_option_to_dict(item_class),
+            *[
+                self._recipe_option_to_dict(self.recipes_by_id[recipe_id])
+                for recipe_id in group.recipe_ids
+                if recipe_id in self.recipes_by_id
+            ],
+        ]
+
+    def _direct_raw_option_to_dict(self, item_class: str) -> dict[str, Any]:
+        item = self._item_for_class(item_class)
+        return {
+            "id": _DIRECT_RAW_RECIPE_ID,
+            "name": "直接使用材料",
+            "isDirectRaw": True,
+            "inputs": [],
+            "outputs": [
+                {
+                    "item": self._item_to_dict(item),
+                    "rate": 1,
+                    "unit": item.unit,
+                }
+            ],
+        }
+
     def _item_for_class(self, item_class: str) -> Item:
         return self.items.get(
             item_class,
@@ -652,6 +949,11 @@ class ProductionPlanner:
         primary_item_class = primary_output.item_class if primary_output else ""
         group = self.replacement_group_by_recipe.get(recipe.recipe_id)
         group_recipe_ids = group.recipe_ids if group else (recipe.recipe_id,)
+        default_recipe_id = (
+            _DIRECT_RAW_RECIPE_ID
+            if primary_item_class in self.raw_source_classes
+            else (group.base_recipe_ids[0] if group and group.base_recipe_ids else group_recipe_ids[0])
+        ) if group_recipe_ids else recipe.recipe_id
         return {
             "id": recipe.recipe_id,
             "name": recipe.name,
@@ -659,13 +961,26 @@ class ProductionPlanner:
             "producedIn": list(recipe.produced_in),
             "durationSec": _clean_number(recipe.duration_sec),
             "primaryOutput": self._item_to_dict(self._item_for_class(primary_item_class)) if primary_item_class else None,
-            "defaultRecipeId": group_recipe_ids[0] if group_recipe_ids else recipe.recipe_id,
-            "replacementOptions": [
-                self._recipe_option_to_dict(self.recipes_by_id[recipe_id])
-                for recipe_id in group_recipe_ids
-                if recipe_id in self.recipes_by_id
-            ],
+            "defaultRecipeId": default_recipe_id,
+            "replacementOptions": self._replacement_options_for_recipe_group(group, recipe),
         }
+
+    def _replacement_options_for_recipe_group(
+        self,
+        group: ReplacementGroup | None,
+        recipe: Recipe,
+    ) -> list[dict[str, Any]]:
+        if group is None:
+            return [self._recipe_option_to_dict(recipe)]
+        options: list[dict[str, Any]] = []
+        if group.item_class in self.raw_source_classes:
+            options.append(self._direct_raw_option_to_dict(group.item_class))
+        options.extend(
+            self._recipe_option_to_dict(self.recipes_by_id[recipe_id])
+            for recipe_id in group.recipe_ids
+            if recipe_id in self.recipes_by_id
+        )
+        return options
 
     def _recipe_option_to_dict(self, recipe: Recipe) -> dict[str, Any]:
         return {
@@ -747,7 +1062,49 @@ def _read_worksheet(workbook: zipfile.ZipFile, sheet_path: str, shared_strings: 
                 values.append("")
             values.append(_cell_value(cell, shared_strings))
         rows.append(values)
+    _apply_merged_cell_values(rows, root)
     return rows
+
+
+def _apply_merged_cell_values(rows: list[list[Any]], root: ET.Element) -> None:
+    for merge_cell in root.findall(f"{_MAIN_NS}mergeCells/{_MAIN_NS}mergeCell"):
+        bounds = _merge_bounds(merge_cell.attrib.get("ref", ""))
+        if not bounds:
+            continue
+        start_row, start_col, end_row, end_col = bounds
+        if start_row < 1 or start_col < 1 or end_row < start_row or end_col < start_col:
+            continue
+        while len(rows) < end_row:
+            rows.append([])
+        top_row = rows[start_row - 1]
+        while len(top_row) < start_col:
+            top_row.append("")
+        top_value = top_row[start_col - 1]
+        for row_index in range(start_row, end_row + 1):
+            row = rows[row_index - 1]
+            while len(row) < end_col:
+                row.append("")
+            for col_index in range(start_col, end_col + 1):
+                if row[col_index - 1] == "":
+                    row[col_index - 1] = top_value
+
+
+def _merge_bounds(ref: str) -> tuple[int, int, int, int] | None:
+    parts = ref.split(":")
+    if len(parts) != 2:
+        return None
+    start = _cell_coordinates(parts[0])
+    end = _cell_coordinates(parts[1])
+    if start is None or end is None:
+        return None
+    return start[0], start[1], end[0], end[1]
+
+
+def _cell_coordinates(cell_ref: str) -> tuple[int, int] | None:
+    match = _CELL_REF_RE.fullmatch(cell_ref)
+    if not match:
+        return None
+    return int(match.group(2)), _column_index(match.group(1))
 
 
 def _column_index(cell_ref: str) -> int:
@@ -820,14 +1177,31 @@ def _load_item_infos(rows: list[list[Any]]) -> dict[str, _ItemInfo]:
     return infos
 
 
-def _load_raw_material_classes(rows: list[list[Any]]) -> set[str]:
+def _load_material_recipe_item_names(rows: list[list[Any]]) -> dict[str, str]:
+    item_names: dict[str, str] = {}
+    for row in _dict_rows(rows):
+        item_class = _text(row.get("MaterialClassName"))
+        if not item_class:
+            continue
+        item_name = _text(row.get("MaterialName")) or item_class
+        existing_name = item_names.get(item_class)
+        if existing_name and existing_name != item_name:
+            raise PlannerError(f"MaterialRecipe has conflicting MaterialName for {item_class}: {existing_name} / {item_name}")
+        item_names[item_class] = item_name
+    if not item_names:
+        raise PlannerError("MaterialRecipe sheet must contain at least one MaterialClassName.")
+    return item_names
+
+
+def _load_material_recipe_raw_classes(rows: list[list[Any]]) -> set[str]:
     raw_classes: set[str] = set()
     for row in _dict_rows(rows):
-        item_class = _text(row.get("ItemClass") or row.get("ClassName"))
-        if item_class:
+        item_class = _text(row.get("MaterialClassName"))
+        category = _text(row.get("MaterialCategory"))
+        if item_class and category == _MATERIAL_CATEGORY_RAW:
             raw_classes.add(item_class)
     if not raw_classes:
-        raise PlannerError("RawMaterials sheet must contain at least one ItemClass.")
+        raise PlannerError("MaterialRecipe sheet must contain at least one 原始材料 row.")
     return raw_classes
 
 
@@ -850,6 +1224,40 @@ def _load_recipe_io(rows: list[list[Any]]) -> tuple[dict[str, list[Ingredient]],
         by_recipe[recipe_id].append(ingredient)
         item_names[item_class] = item_name
     return dict(by_recipe), item_names
+
+
+def _load_power_groups(rows: list[list[Any]]) -> tuple[PowerGroup, ...]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in _dict_rows(rows):
+        group_class = _text(row.get("GroupClass"))
+        member_class = _text(row.get("MemberClass"))
+        if not group_class or not member_class:
+            continue
+        group = groups.setdefault(
+            group_class,
+            {
+                "groupName": _text(row.get("GroupName")) or group_class,
+                "members": [],
+                "memberNames": [],
+            },
+        )
+        if member_class in group["members"]:
+            continue
+        group["members"].append(member_class)
+        group["memberNames"].append(_text(row.get("MemberName")) or member_class)
+
+    result = [
+        PowerGroup(
+            group_class=group_class,
+            group_name=group["groupName"],
+            member_classes=tuple(group["members"]),
+            member_names=tuple(group["memberNames"]),
+        )
+        for group_class, group in groups.items()
+        if group["members"]
+    ]
+    result.sort(key=lambda group: (group.group_name.lower(), group.group_class))
+    return tuple(result)
 
 
 def _load_recipes(
@@ -879,34 +1287,55 @@ def _load_recipes(
     return tuple(recipes)
 
 
-def _load_replacement_groups(rows: list[list[Any]], recipes: tuple[Recipe, ...]) -> tuple[ReplacementGroup, ...]:
-    sheet_order = _replacement_sheet_recipe_order(rows)
-    groups: dict[str, list[Recipe]] = defaultdict(list)
-    for recipe in recipes:
-        if recipe.outputs:
-            groups[recipe.outputs[0].item_class].append(recipe)
+def _load_material_recipe_replacement_groups(rows: list[list[Any]], recipes: tuple[Recipe, ...]) -> tuple[ReplacementGroup, ...]:
+    recipes_by_id = {recipe.recipe_id: recipe for recipe in recipes}
+    recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
+    base_recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
+    material_names: dict[str, str] = {}
+    material_categories: dict[str, str] = {}
+
+    for row in _dict_rows(rows):
+        item_class = _text(row.get("MaterialClassName"))
+        if not item_class:
+            continue
+        material_names[item_class] = _text(row.get("MaterialName")) or item_class
+        material_categories[item_class] = _text(row.get("MaterialCategory"))
+        recipe_id = _material_recipe_id(row.get("RecipeID"))
+        if not recipe_id:
+            continue
+        recipe_category = _text(row.get("RecipeCategory"))
+        if recipe_category not in {_RECIPE_CATEGORY_BASE, _RECIPE_CATEGORY_REPLACEMENT}:
+            continue
+        recipe = recipes_by_id.get(recipe_id)
+        if recipe is None or not recipe.outputs:
+            continue
+        if recipe.outputs[0].item_class != item_class:
+            continue
+        group_recipe_ids = recipe_ids_by_material[item_class]
+        if recipe_id not in group_recipe_ids:
+            group_recipe_ids.append(recipe_id)
+        if recipe_category == _RECIPE_CATEGORY_BASE:
+            base_recipe_ids = base_recipe_ids_by_material[item_class]
+            if recipe_id not in base_recipe_ids:
+                base_recipe_ids.append(recipe_id)
 
     result: list[ReplacementGroup] = []
-    for item_class, group_recipes in groups.items():
-        if not group_recipes:
+    for item_class, recipe_ids in recipe_ids_by_material.items():
+        if not recipe_ids:
             continue
-        output = group_recipes[0].outputs[0]
-        order_by_name = {
-            recipe_name: index
-            for index, recipe_name in enumerate(sheet_order.get(output.item_name, []))
-        }
-        sorted_recipes = sorted(
-            group_recipes,
-            key=lambda recipe: (
-                order_by_name.get(recipe.name, len(order_by_name)),
-                _replacement_group_recipe_sort_key(recipe),
-            ),
-        )
+        first_recipe = recipes_by_id.get(recipe_ids[0])
+        item_name = material_names.get(item_class)
+        if not item_name and first_recipe and first_recipe.outputs:
+            item_name = first_recipe.outputs[0].item_name
+        base_recipe_ids = base_recipe_ids_by_material.get(item_class, [])
+        if not base_recipe_ids and material_categories.get(item_class) != _MATERIAL_CATEGORY_RAW:
+            base_recipe_ids = recipe_ids[:1]
         result.append(
             ReplacementGroup(
                 item_class=item_class,
-                item_name=output.item_name,
-                recipe_ids=tuple(recipe.recipe_id for recipe in sorted_recipes),
+                item_name=item_name or item_class,
+                recipe_ids=tuple(recipe_ids),
+                base_recipe_ids=tuple(base_recipe_ids),
             )
         )
 
@@ -914,17 +1343,11 @@ def _load_replacement_groups(rows: list[list[Any]], recipes: tuple[Recipe, ...])
     return tuple(result)
 
 
-def _replacement_sheet_recipe_order(rows: list[list[Any]]) -> dict[str, list[str]]:
-    order: dict[str, list[str]] = defaultdict(list)
-    current_output_name = ""
-    for row in _dict_rows(rows):
-        output_name = _text(row.get("产出材料名称"))
-        if output_name:
-            current_output_name = output_name
-        recipe_name = _text(row.get("配方名称"))
-        if current_output_name and recipe_name:
-            order[current_output_name].append(recipe_name)
-    return dict(order)
+def _material_recipe_id(value: Any) -> str:
+    recipe_id = _text(value)
+    if recipe_id.lower() == "none":
+        return ""
+    return recipe_id
 
 
 def _replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, str, str]:
@@ -1002,6 +1425,10 @@ def _bool(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return _text(value).lower() in {"1", "true", "yes"}
+
+
+def _display_noise_floor(scale: float) -> float:
+    return max(_RESULT_EPS, abs(scale) * 1e-6)
 
 
 def _clean_number(value: float) -> float | int:

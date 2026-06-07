@@ -53,15 +53,15 @@
     },
     "out": {
       "type": "string path",
-      "current": "..\\raw_data\\Satisfactory_Recipes_Wide.xlsx",
+      "current": "..\\raw_data\\SatisfactoryData.xlsx",
       "usage": "生成的 Excel 文件路径。配置文件里的相对路径以本配置文件所在目录为基准；命令行 --out 的相对路径以当前工作目录为基准。",
       "when_to_use": "想改文件名、保存到桌面、或保留多个版本时修改这一项。",
       "example_values": [
-        "..\\raw_data\\Satisfactory_Recipes_Wide.xlsx",
-        "output\\Satisfactory_Recipes_Wide.xlsx",
-        "E:\\MyWork\\SatisfactoryCalclator\\pythonProject\\raw_data\\Satisfactory_Recipes_Wide.xlsx"
+        "..\\raw_data\\SatisfactoryData.xlsx",
+        "output\\SatisfactoryData.xlsx",
+        "E:\\MyWork\\SatisfactoryCalculator\\satisfactory_calculator\\raw_data\\SatisfactoryData.xlsx"
       ],
-      "cli_override": "--out \".\\raw_data\\Satisfactory_Recipes_Wide.xlsx\"",
+      "cli_override": "--out \".\\raw_data\\SatisfactoryData.xlsx\"",
       "notes": "如果目标文件已存在，脚本会覆盖它。Excel 正在打开该文件时，Windows 可能阻止覆盖。"
     },
     "lang": {
@@ -80,14 +80,14 @@
     "wide_only": {
       "type": "boolean",
       "current": false,
-      "usage": "是否只生成 RecipesWide 一个工作表。",
-      "when_to_use": "只想快速看宽表、不需要 Items、RecipeInputs、RecipeOutputs 等辅助表时设为 true。",
+      "usage": "Only generate the MaterialRecipe worksheet.",
+      "when_to_use": "Use true when only the material-to-recipe view is needed.",
       "example_values": [
         true,
         false
       ],
       "cli_override": "--wide-only",
-      "notes": "false 会生成完整工作簿：README、RecipesWide、Items、RecipesLong、RecipeInputs、RecipeOutputs、VersionInfo、Validation。"
+      "notes": "false generates README, MaterialRecipe, PowerGroup, Items, RecipesLong, RecipeInputs, RecipeOutputs, VersionInfo, and Validation."
     },
     "debug_json": {
       "type": "boolean",
@@ -105,7 +105,7 @@
   "game_dir": "F:\\Steam\\steamapps\\common\\Satisfactory",
   "docs_json": null,
   "auto": false,
-  "out": "..\\raw_data\\Satisfactory_Recipes_Wide.xlsx",
+  "out": "..\\raw_data\\SatisfactoryData.xlsx",
   "lang": "en-US",
   "wide_only": false,
   "debug_json": false
