@@ -1901,6 +1901,7 @@
         pathParent.appendChild(edge.pathElement);
       }
       edge.pathElement?.classList.toggle("highlight-edge", isHighlighted);
+      edge.pathElement?.classList.toggle("flowing-edge", isHighlighted);
       edge.pathElement?.classList.toggle("dimmed", hasSelection && !isHighlighted);
       edge.labelElement?.classList.toggle("highlight-edge", isHighlighted);
       edge.labelElement?.classList.toggle("dimmed", hasSelection && !isHighlighted);
@@ -2311,12 +2312,11 @@
     const curve = Math.max(80, Math.min(220, distance * 0.45));
     if (edge.feedback) {
       const backtrack = Math.max(0, edge.x1 - edge.x2);
-      const horizontal = Math.max(120, Math.min(260, backtrack * 0.22 + 120));
-      const direction = edge.y2 >= edge.y1 ? 1 : -1;
-      const vertical = Math.min(46, Math.abs(edge.y2 - edge.y1) * 0.12 + 18);
+      const horizontal = Math.max(180, Math.min(420, backtrack * 0.35 + 180));
+      const vertical = Math.max(100, Math.min(280, backtrack * 0.18 + Math.abs(edge.y2 - edge.y1) * 0.35 + 110));
       return {
-        c1: { x: edge.x1 + horizontal, y: edge.y1 + direction * vertical },
-        c2: { x: edge.x2 - horizontal, y: edge.y2 - direction * vertical },
+        c1: { x: edge.x1 + horizontal, y: edge.y1 + vertical },
+        c2: { x: edge.x2 - horizontal, y: edge.y2 + vertical },
       };
     }
     return {

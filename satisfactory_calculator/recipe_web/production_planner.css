@@ -407,11 +407,6 @@ h2 {
   transition: stroke-opacity 0.16s ease, filter 0.16s ease;
 }
 
-.graph-flow.feedback {
-  stroke-dasharray: 10 7;
-  stroke-opacity: 0.48;
-}
-
 .graph-flow.dimmed {
   stroke-opacity: 0.12;
   mix-blend-mode: normal;
@@ -423,8 +418,16 @@ h2 {
   mix-blend-mode: normal;
 }
 
-.graph-flow.feedback.highlight-edge {
-  stroke-opacity: 0.98;
+.graph-flow.flowing-edge {
+  stroke-dasharray: 16 10;
+  animation: graph-flow-forward 0.72s linear infinite;
+  filter: drop-shadow(0 0 7px rgba(250, 204, 21, 0.86));
+}
+
+@keyframes graph-flow-forward {
+  to {
+    stroke-dashoffset: -26;
+  }
 }
 
 .graph-edge-label {
