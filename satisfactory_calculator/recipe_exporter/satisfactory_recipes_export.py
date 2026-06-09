@@ -22,7 +22,7 @@ from typing import Any, Iterable, Sequence
 from xml.sax.saxutils import escape
 
 
-SCRIPT_VERSION = "0.3.8"
+SCRIPT_VERSION = "0.3.9"
 CONFIG_FILE_NAME = "satisfactory_recipes_export.config.json"
 EXCEL_FILE_NAME = "SatisfactoryData.xlsx"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -58,19 +58,16 @@ NUCLEAR_FUEL_REPLACEMENT_ORDER = {
     "Desc_PlutoniumFuelRod_C": 1,
     "Desc_FicsoniumFuelRod_C": 2,
 }
-RAW_REASON_RESOURCE_DESCRIPTOR = "游戏资源描述符（NativeClass 包含 FGResourceDescriptor）"
-RAW_REASON_NO_RECIPE_OUTPUT = "没有非采集配方产出（RecipeOutputs 中不存在该物品）"
-MATERIAL_CATEGORY_RAW = "原始材料"
-MATERIAL_CATEGORY_NORMAL = "普通材料"
-MATERIAL_CATEGORY_POWER = "电力"
-RECIPE_FLAG_PACKAGED = "装箱"
-RECIPE_FLAG_UNPACKAGED = "拆箱"
-RECIPE_FLAG_POWER = "发电"
-RECIPE_FLAG_PRIMARY = "主产品配方"
-RECIPE_FLAG_BYPRODUCT = "副产品配方"
-RECIPE_CATEGORY_BASE = "基础配方"
-RECIPE_CATEGORY_REPLACEMENT = "可替换配方"
-RECIPE_CATEGORY_UNUSABLE = "不可使用配方"
+RAW_REASON_RESOURCE_DESCRIPTOR = "NativeClass contains FGResourceDescriptor"
+RAW_REASON_NO_RECIPE_OUTPUT = "No non-extraction recipe output"
+MATERIAL_CATEGORY_RAW = "RawMaterial"
+MATERIAL_CATEGORY_PICKUP = "PickupMaterial"
+MATERIAL_CATEGORY_NORMAL = "NormalMaterial"
+MATERIAL_CATEGORY_POWER = "Power"
+RECIPE_FLAG_PACKAGED = "Package"
+RECIPE_FLAG_UNPACKAGED = "Unpackage"
+RECIPE_FLAG_RAW_MATERIAL = "RawMaterial"
+RECIPE_FLAG_POWER = "PowerRecipe"
 
 
 @dataclass(frozen=True)
@@ -813,7 +810,7 @@ def build_sheets(
         material_recipe_sheet,
         Worksheet("PowerGroup", build_power_group_rows(recipes, items)),
         Worksheet("Items", build_items_rows(unique_items)),
-        Worksheet("RecipesLong", build_recipes_long_rows(recipes)),
+        Worksheet("RecipesLong", build_recipes_long_rows(recipes, items)),
         Worksheet("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
         Worksheet("RecipeOutputs", build_recipe_io_rows(recipes, input_side=False)),
         Worksheet("VersionInfo", build_version_rows(docs_path, args)),
@@ -861,8 +858,6 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
             "MaterialName",
             "MaterialCategory",
             "RecipeName",
-            "RecipeCategory",
-            "RecipeFlag",
             *[StyledCell(f"Input{index}", STYLE_INPUT) for index in range(1, max_inputs + 1)],
             *[StyledCell(f"Output{index}", STYLE_OUTPUT) for index in range(1, max_outputs + 1)],
             "RecipeID",
@@ -883,8 +878,6 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
                     item.display_name,
                     category,
                     "None",
-                    "",
-                    "",
                     *[StyledCell("", STYLE_INPUT) for _ in range(max_inputs)],
                     *[StyledCell("", STYLE_OUTPUT) for _ in range(max_outputs)],
                     "None",
@@ -892,15 +885,12 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
             )
             continue
 
-        recipe_categories = material_recipe_categories(item.class_name, category, material_recipes)
         for recipe_index, recipe in enumerate(material_recipes):
             row: list[Any] = [
                 item.class_name if recipe_index == 0 else None,
                 item.display_name if recipe_index == 0 else None,
                 category if recipe_index == 0 else None,
                 recipe.recipe_name,
-                recipe_categories.get(recipe.recipe_id, RECIPE_CATEGORY_UNUSABLE),
-                recipe_flag_text(recipe, item.class_name),
             ]
             for input_index in range(max_inputs):
                 row.append(
@@ -945,53 +935,30 @@ def material_recipe_sort_key(recipe: Recipe, material_class: str) -> tuple[int, 
 def material_category(item_class: str, item: ItemInfo, output_classes: set[str]) -> str:
     if is_power_item(item):
         return MATERIAL_CATEGORY_POWER
-    if raw_material_reason(item_class, item, output_classes):
+    if is_raw_resource_descriptor(item):
         return MATERIAL_CATEGORY_RAW
+    if item_class not in output_classes:
+        return MATERIAL_CATEGORY_PICKUP
     return MATERIAL_CATEGORY_NORMAL
 
 
 def material_category_sort_key(category: str) -> int:
     order = {
         MATERIAL_CATEGORY_RAW: 0,
-        MATERIAL_CATEGORY_NORMAL: 1,
-        MATERIAL_CATEGORY_POWER: 2,
+        MATERIAL_CATEGORY_PICKUP: 1,
+        MATERIAL_CATEGORY_NORMAL: 2,
+        MATERIAL_CATEGORY_POWER: 3,
     }
     return order.get(category, 99)
 
 
-def material_recipe_categories(material_class: str, material_category_name: str, recipes: Sequence[Recipe]) -> dict[str, str]:
-    categories: dict[str, str] = {}
-    usable_primary = [
-        recipe
-        for recipe in recipes
-        if primary_output_class(recipe) == material_class and not is_unpackage_recipe(recipe)
-    ]
-    base_recipe_ids: set[str] = set()
-    if material_category_name != MATERIAL_CATEGORY_RAW:
-        base_recipe_ids = {
-            recipe.recipe_id
-            for recipe in usable_primary
-            if not is_alternate_recipe_name(recipe)
-        }
-        if not base_recipe_ids and usable_primary:
-            base_recipe_ids.add(usable_primary[0].recipe_id)
-
-    for recipe in recipes:
-        if is_unpackage_recipe(recipe) or primary_output_class(recipe) != material_class:
-            categories[recipe.recipe_id] = RECIPE_CATEGORY_UNUSABLE
-        elif recipe.recipe_id in base_recipe_ids:
-            categories[recipe.recipe_id] = RECIPE_CATEGORY_BASE
-        else:
-            categories[recipe.recipe_id] = RECIPE_CATEGORY_REPLACEMENT
-    return categories
-
-
-def recipe_flag_text(recipe: Recipe, material_class: str) -> str:
+def recipe_flag_text(recipe: Recipe, items: dict[str, ItemInfo], output_classes: set[str]) -> str:
     flags: list[str] = []
-    flags.append(RECIPE_FLAG_PRIMARY if primary_output_class(recipe) == material_class else RECIPE_FLAG_BYPRODUCT)
     package_flag = package_recipe_flag(recipe)
     if package_flag:
         flags.append(package_flag)
+    if is_raw_material_recipe(recipe, items, output_classes):
+        flags.append(RECIPE_FLAG_RAW_MATERIAL)
     if is_power_recipe(recipe):
         flags.append(RECIPE_FLAG_POWER)
     return "|".join(flags)
@@ -1003,6 +970,16 @@ def is_unpackage_recipe(recipe: Recipe) -> bool:
 
 def is_alternate_recipe_name(recipe: Recipe) -> bool:
     return recipe.recipe_name.strip().lower().startswith("alternate")
+
+
+def is_raw_material_recipe(recipe: Recipe, items: dict[str, ItemInfo], output_classes: set[str]) -> bool:
+    if not recipe.outputs:
+        return False
+    for output in recipe.outputs:
+        output_item = item_info_for_class(output.item_class, items)
+        if output_item is None or material_category(output.item_class, output_item, output_classes) != MATERIAL_CATEGORY_RAW:
+            return False
+    return True
 
 
 def package_recipe_flag(recipe: Recipe) -> str:
@@ -1133,8 +1110,12 @@ def build_items_rows(items: Sequence[ItemInfo]) -> list[list[Any]]:
     return rows
 
 
+def is_raw_resource_descriptor(item: ItemInfo | None) -> bool:
+    return bool(item and "FGResourceDescriptor" in item.native_class)
+
+
 def raw_material_reason(item_class: str, item: ItemInfo | None, output_classes: set[str]) -> str:
-    if item and "FGResourceDescriptor" in item.native_class:
+    if is_raw_resource_descriptor(item):
         return RAW_REASON_RESOURCE_DESCRIPTOR
     if item_class not in output_classes:
         return RAW_REASON_NO_RECIPE_OUTPUT
@@ -1150,12 +1131,18 @@ def item_display_name(item_class: str, items: dict[str, ItemInfo]) -> str:
     return item.display_name if item else humanize_class_name(item_class)
 
 
-def build_recipes_long_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
+def build_recipes_long_rows(recipes: Sequence[Recipe], items: dict[str, ItemInfo]) -> list[list[Any]]:
+    output_classes = {
+        output.item_class
+        for recipe in recipes
+        for output in recipe.outputs
+    }
     rows = [
         [
             "RecipeID",
             "RecipeName",
             "IsAlternate",
+            "RecipeFlag",
             "ProducedIn",
             "DurationSec",
             "InputCount",
@@ -1170,6 +1157,7 @@ def build_recipes_long_rows(recipes: Sequence[Recipe]) -> list[list[Any]]:
                 recipe.recipe_id,
                 recipe.recipe_name,
                 recipe.is_alternate,
+                recipe_flag_text(recipe, items, output_classes),
                 ", ".join(recipe.produced_in),
                 clean_number(recipe.duration_sec),
                 len(recipe.inputs),

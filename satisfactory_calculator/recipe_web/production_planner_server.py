@@ -25,6 +25,9 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/items":
             self._send_json({"items": self.planner.list_items()})
             return
+        if path == "/api/recipes":
+            self._send_json(self.planner.list_recipes())
+            return
         if path == "/":
             self.path = "/production_planner.html"
         super().do_GET()
@@ -39,8 +42,7 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
             payload = self._read_json_body()
             result = self.planner.plan(
                 payload.get("targets", []),
-                payload.get("selectedRecipes", {}),
-                payload.get("recipeMode"),
+                enabled_recipe_ids=payload.get("enabledRecipeIds"),
             )
         except PlannerError as exc:
             self._send_json({"error": str(exc)}, status=400)

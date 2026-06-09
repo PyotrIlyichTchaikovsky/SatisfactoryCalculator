@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Satisfactory &#x751f;&#x4ea7;&#x89c4;&#x5212;</title>
-  <link rel="stylesheet" href="production_planner.css?v=material-recipe-20260608-1">
-  <script defer src="production_planner.js?v=material-recipe-20260608-1"></script>
+  <link rel="stylesheet" href="production_planner.css?v=graph-highlight-20260609-1">
+  <script defer src="production_planner.js?v=graph-highlight-20260609-1"></script>
 </head>
 <body>
   <header class="app-header">
@@ -19,7 +19,10 @@
     <section class="input-panel" aria-labelledby="targetHeading">
       <div class="panel-title-row">
         <h2 id="targetHeading">&#x751f;&#x4ea7;&#x76ee;&#x6807;</h2>
-        <button id="addTargetButton" class="secondary-button" type="button">&#x6dfb;&#x52a0;&#x7269;&#x54c1;</button>
+        <div class="panel-actions">
+          <button id="recipeFilterButton" class="secondary-button" type="button">&#x914d;&#x65b9;&#x7b5b;&#x9009;</button>
+          <button id="addTargetButton" class="secondary-button" type="button">&#x6dfb;&#x52a0;&#x7269;&#x54c1;</button>
+        </div>
       </div>
 
       <form id="plannerForm" autocomplete="off">
@@ -35,14 +38,6 @@
         <h2 id="resultHeading">&#x7ed3;&#x679c;</h2>
         <div class="result-actions">
           <button id="resetLayoutButton" class="secondary-button compact-button" type="button">&#x91cd;&#x7f6e;&#x5e03;&#x5c40;</button>
-          <label class="recipe-preset-control" for="recipePresetSelect">
-            <span>&#x914d;&#x65b9;&#x65b9;&#x6848;</span>
-            <select id="recipePresetSelect" class="recipe-preset-select">
-              <option value="">&#x9009;&#x62e9;&#x65b9;&#x6848;</option>
-              <option value="base">&#x57fa;&#x7840;&#x914d;&#x65b9;</option>
-              <option value="bestEfficiency">&#x6700;&#x4f73;&#x6548;&#x7387;</option>
-            </select>
-          </label>
           <div class="tabs" role="tablist" aria-label="&#x7ed3;&#x679c;&#x89c6;&#x56fe;">
             <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">&#x65b9;&#x6848;&#x89c6;&#x56fe;</button>
             <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false">&#x5408;&#x5e76;&#x8868;&#x683c;</button>
