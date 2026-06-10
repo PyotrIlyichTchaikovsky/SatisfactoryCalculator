@@ -1,0 +1,81 @@
+{
+  "_help": {
+    "summary": "Build recipe_web/data/Data.xlsx from data_exporter/raw_data/RawData.json.",
+    "native_classes": "Short NativeClass names to read from RawData.json for each planner data domain.",
+    "planner_rules": "Feature switches and NativeClass constraints for planner-only derived data.",
+    "sheets": "Planner workbook sheets to write."
+  },
+  "source": {
+    "raw_json": "raw_data/RawData.json"
+  },
+  "output": {
+    "data_xlsx": "../recipe_web/data/Data.xlsx"
+  },
+  "native_classes": {
+    "items": [
+      "FGItemDescriptor",
+      "FGResourceDescriptor",
+      "FGItemDescriptorBiomass",
+      "FGConsumableDescriptor",
+      "FGEquipmentDescriptor",
+      "FGPowerShardDescriptor",
+      "FGItemDescriptorNuclearFuel",
+      "FGItemDescriptorPowerBoosterFuel",
+      "FGVehicleDescriptor",
+      "FGAmmoTypeProjectile",
+      "FGAmmoTypeSpreadshot",
+      "FGAmmoTypeInstantHit",
+      "FGBuildingDescriptor"
+    ],
+    "recipes": [
+      "FGRecipe"
+    ],
+    "devices": [
+      "FGBuildableManufacturer",
+      "FGBuildableManufacturerVariablePower",
+      "FGBuildableResourceExtractor",
+      "FGBuildableWaterPump",
+      "FGBuildableFrackingExtractor",
+      "FGBuildableFrackingActivator",
+      "FGBuildableGeneratorFuel",
+      "FGBuildableGeneratorNuclear",
+      "FGBuildableGeneratorGeoThermal",
+      "FGBuildablePowerBooster",
+      "FGBuildablePowerStorage"
+    ],
+    "schematics": [
+      "FGSchematic"
+    ]
+  },
+  "planner_rules": {
+    "allowed_recipe_produced_in_native_classes": [
+      "FGBuildableManufacturer",
+      "FGBuildableManufacturerVariablePower"
+    ],
+    "generate_power_items": true,
+    "generate_power_recipes": true,
+    "power_recipe_native_classes": [
+      "FGBuildableGeneratorFuel",
+      "FGBuildableGeneratorNuclear",
+      "FGBuildableGeneratorGeoThermal"
+    ],
+    "recipe_flags": {
+      "package": true,
+      "unpackage": true,
+      "raw_material": true,
+      "power_recipe": true
+    }
+  },
+  "sheets": {
+    "README": true,
+    "MaterialRecipe": true,
+    "PowerGroup": true,
+    "Devices": true,
+    "Items": true,
+    "RecipesLong": true,
+    "RecipeInputs": true,
+    "RecipeOutputs": true,
+    "VersionInfo": true,
+    "Validation": true
+  }
+}

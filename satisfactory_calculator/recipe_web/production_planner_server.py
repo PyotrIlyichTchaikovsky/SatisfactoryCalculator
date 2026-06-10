@@ -87,7 +87,7 @@ def parse_args() -> argparse.Namespace:
         "--excel",
         type=Path,
         default=DEFAULT_EXCEL_PATH,
-        help="Path to SatisfactoryData.xlsx.",
+        help="Path to planner Data.xlsx.",
     )
     return parser.parse_args()
 

@@ -1,0 +1,13 @@
+﻿{
+  "_help": {
+    "summary": "Copy the game's Docs.json to data_exporter/raw_data/RawData.json without parsing or rewriting it.",
+    "game_dir": "Satisfactory install directory. The exporter searches CommunityResources\\Docs\\{lang}.json under this directory.",
+    "docs_json": "Optional direct Docs.json path. When set, it takes precedence over game_dir.",
+    "raw_json_out": "Raw Docs.json snapshot output path. This is a direct byte copy of the source JSON."
+  },
+  "game_dir": "F:\\Steam\\steamapps\\common\\Satisfactory",
+  "docs_json": null,
+  "auto": false,
+  "raw_json_out": "raw_data\\RawData.json",
+  "lang": "en-US"
+}

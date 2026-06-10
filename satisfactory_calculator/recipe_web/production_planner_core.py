@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - handled at runtime with a clear planne
     milp = None
 
 
-DEFAULT_EXCEL_PATH = Path(__file__).resolve().parent.parent / "raw_data" / "SatisfactoryData.xlsx"
+DEFAULT_EXCEL_PATH = Path(__file__).resolve().parent / "data" / "Data.xlsx"
 
 _MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -36,6 +36,7 @@ _RECIPE_MODE_BASE = "base"
 _RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency"
 _MATERIAL_CATEGORY_RAW = "RawMaterial"
 _MATERIAL_CATEGORY_PICKUP = "PickupMaterial"
+_MATERIAL_CATEGORY_NORMAL = "NormalMaterial"
 _MATERIAL_CATEGORY_POWER = "Power"
 _RECIPE_FLAG_PACKAGE = "Package"
 _RECIPE_FLAG_UNPACKAGE = "Unpackage"
@@ -198,27 +199,26 @@ class ProductionPlanner:
     def from_excel(cls, excel_path: str | Path = DEFAULT_EXCEL_PATH) -> "ProductionPlanner":
         path = Path(excel_path).expanduser().resolve()
         sheets = _load_xlsx_sheets(path)
-        required_sheets = {"Items", "MaterialRecipe", "RecipesLong", "RecipeInputs", "RecipeOutputs"}
+        required_sheets = {"Items", "RecipesLong", "RecipeInputs", "RecipeOutputs"}
         missing = sorted(required_sheets - set(sheets))
         if missing:
             raise PlannerError(f"Excel workbook is missing required sheets: {', '.join(missing)}")
 
         item_infos = _load_item_infos(sheets["Items"])
-        material_recipe_rows = sheets["MaterialRecipe"]
-        material_item_names = _load_material_recipe_item_names(material_recipe_rows)
-        material_categories = _load_material_recipe_categories(material_recipe_rows)
-        raw_source_classes, pickup_source_classes = _load_material_recipe_source_classes(material_categories)
         inputs_by_recipe, input_item_names = _load_recipe_io(sheets["RecipeInputs"])
         outputs_by_recipe, output_item_names = _load_recipe_io(sheets["RecipeOutputs"])
         recipes = _load_recipes(sheets["RecipesLong"], inputs_by_recipe, outputs_by_recipe)
         version_info = _load_key_value_sheet(sheets.get("VersionInfo", []))
-        material_recipe_groups = _load_material_recipe_groups(material_recipe_rows, recipes)
-        replacement_groups = _load_material_recipe_replacement_groups(material_recipe_rows, recipes)
         power_groups = _load_power_groups(sheets.get("PowerGroup", []))
 
-        used_classes = set(material_item_names)
-        producible_classes = set(output_item_names) & used_classes
-        item_names = {**input_item_names, **output_item_names, **material_item_names}
+        item_names = _build_item_names(item_infos, input_item_names, output_item_names)
+        used_classes = _planner_item_classes(item_infos, input_item_names, output_item_names)
+        output_classes = set(output_item_names)
+        material_categories = _derive_material_categories(used_classes, item_infos, output_classes)
+        raw_source_classes, pickup_source_classes = _source_classes_from_categories(material_categories)
+        material_recipe_groups = _build_material_recipe_groups(recipes, item_names, material_categories)
+        replacement_groups = _build_replacement_groups(recipes, item_names, material_categories)
+        producible_classes = output_classes & used_classes
         items = _build_items(used_classes, producible_classes, item_names, item_infos, material_categories)
         return cls(
             path,
@@ -1553,23 +1553,6 @@ def _dict_rows(rows: list[list[Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def _material_recipe_dict_rows(rows: list[list[Any]]) -> list[dict[str, Any]]:
-    material_fields = ("MaterialClassName", "MaterialName", "MaterialCategory")
-    last_values = {field: "" for field in material_fields}
-    result: list[dict[str, Any]] = []
-    for row in _dict_rows(rows):
-        row = dict(row)
-        for field in material_fields:
-            value = _text(row.get(field))
-            if value:
-                last_values[field] = value
-                row[field] = value
-            else:
-                row[field] = last_values[field]
-        result.append(row)
-    return result
-
-
 def _load_item_infos(rows: list[list[Any]]) -> dict[str, _ItemInfo]:
     infos: dict[str, _ItemInfo] = {}
     for row in _dict_rows(rows):
@@ -1584,52 +1567,6 @@ def _load_item_infos(rows: list[list[Any]]) -> dict[str, _ItemInfo]:
             native_class=_text(row.get("NativeClass")),
         )
     return infos
-
-
-def _load_material_recipe_item_names(rows: list[list[Any]]) -> dict[str, str]:
-    item_names: dict[str, str] = {}
-    for row in _material_recipe_dict_rows(rows):
-        item_class = _text(row.get("MaterialClassName"))
-        if not item_class:
-            continue
-        item_name = _text(row.get("MaterialName")) or item_class
-        existing_name = item_names.get(item_class)
-        if existing_name and existing_name != item_name:
-            raise PlannerError(f"MaterialRecipe has conflicting MaterialName for {item_class}: {existing_name} / {item_name}")
-        item_names[item_class] = item_name
-    if not item_names:
-        raise PlannerError("MaterialRecipe sheet must contain at least one MaterialClassName.")
-    return item_names
-
-
-def _load_material_recipe_categories(rows: list[list[Any]]) -> dict[str, str]:
-    categories: dict[str, str] = {}
-    for row in _material_recipe_dict_rows(rows):
-        item_class = _text(row.get("MaterialClassName"))
-        if not item_class:
-            continue
-        category = _text(row.get("MaterialCategory"))
-        if category:
-            categories[item_class] = category
-    if not categories:
-        raise PlannerError("MaterialRecipe sheet must contain at least one MaterialCategory row.")
-    return categories
-
-
-def _load_material_recipe_source_classes(material_categories: dict[str, str]) -> tuple[set[str], set[str]]:
-    raw_classes = {
-        item_class
-        for item_class, category in material_categories.items()
-        if category == _MATERIAL_CATEGORY_RAW
-    }
-    pickup_classes = {
-        item_class
-        for item_class, category in material_categories.items()
-        if category == _MATERIAL_CATEGORY_PICKUP
-    }
-    if not raw_classes:
-        raise PlannerError("MaterialRecipe sheet must contain at least one RawMaterial row.")
-    return raw_classes, pickup_classes
 
 
 def _load_recipe_io(rows: list[list[Any]]) -> tuple[dict[str, list[Ingredient]], dict[str, str]]:
@@ -1651,6 +1588,170 @@ def _load_recipe_io(rows: list[list[Any]]) -> tuple[dict[str, list[Ingredient]],
         by_recipe[recipe_id].append(ingredient)
         item_names[item_class] = item_name
     return dict(by_recipe), item_names
+
+
+def _build_item_names(
+    item_infos: dict[str, _ItemInfo],
+    input_item_names: dict[str, str],
+    output_item_names: dict[str, str],
+) -> dict[str, str]:
+    item_names = {
+        class_name: info.display_name
+        for class_name, info in item_infos.items()
+        if not _is_building_item_info(info)
+    }
+    item_names.update(input_item_names)
+    item_names.update(output_item_names)
+    return item_names
+
+
+def _planner_item_classes(
+    item_infos: dict[str, _ItemInfo],
+    input_item_names: dict[str, str],
+    output_item_names: dict[str, str],
+) -> set[str]:
+    classes = {
+        class_name
+        for class_name, info in item_infos.items()
+        if not _is_building_item_info(info)
+    }
+    classes.update(input_item_names)
+    classes.update(output_item_names)
+    return {
+        class_name
+        for class_name in classes
+        if not _is_building_item_info(item_infos.get(class_name))
+    }
+
+
+def _derive_material_categories(
+    used_classes: set[str],
+    item_infos: dict[str, _ItemInfo],
+    output_classes: set[str],
+) -> dict[str, str]:
+    categories: dict[str, str] = {}
+    for class_name in used_classes:
+        info = item_infos.get(class_name)
+        if _is_power_item_info(info):
+            categories[class_name] = _MATERIAL_CATEGORY_POWER
+        elif _is_raw_resource_item_info(info):
+            categories[class_name] = _MATERIAL_CATEGORY_RAW
+        elif class_name not in output_classes:
+            categories[class_name] = _MATERIAL_CATEGORY_PICKUP
+        else:
+            categories[class_name] = _MATERIAL_CATEGORY_NORMAL
+    return categories
+
+
+def _source_classes_from_categories(material_categories: dict[str, str]) -> tuple[set[str], set[str]]:
+    raw_classes = {
+        item_class
+        for item_class, category in material_categories.items()
+        if category == _MATERIAL_CATEGORY_RAW
+    }
+    pickup_classes = {
+        item_class
+        for item_class, category in material_categories.items()
+        if category == _MATERIAL_CATEGORY_PICKUP
+    }
+    if not raw_classes:
+        raise PlannerError("Planner data must contain at least one RawMaterial item.")
+    return raw_classes, pickup_classes
+
+
+def _is_building_item_info(info: _ItemInfo | None) -> bool:
+    return bool(info and "FGBuildingDescriptor" in info.native_class)
+
+
+def _is_raw_resource_item_info(info: _ItemInfo | None) -> bool:
+    return bool(info and "FGResourceDescriptor" in info.native_class)
+
+
+def _is_power_item_info(info: _ItemInfo | None) -> bool:
+    return bool(info and (info.form == "RF_POWER" or "SyntheticPower" in info.native_class))
+
+
+def _build_material_recipe_groups(
+    recipes: tuple[Recipe, ...],
+    item_names: dict[str, str],
+    material_categories: dict[str, str],
+) -> tuple[MaterialRecipeGroup, ...]:
+    recipes_by_id = {recipe.recipe_id: recipe for recipe in recipes}
+    recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
+
+    for recipe in recipes:
+        if _recipe_has_flag(recipe, _RECIPE_FLAG_UNPACKAGE):
+            continue
+        seen_outputs: set[str] = set()
+        for output in recipe.outputs:
+            item_class = output.item_class
+            if item_class in seen_outputs or item_class not in material_categories:
+                continue
+            recipe_ids = recipe_ids_by_material[item_class]
+            if recipe.recipe_id not in recipe_ids:
+                recipe_ids.append(recipe.recipe_id)
+            seen_outputs.add(item_class)
+
+    result: list[MaterialRecipeGroup] = []
+    for item_class, recipe_ids in recipe_ids_by_material.items():
+        recipe_ids.sort(key=lambda recipe_id: _material_group_recipe_sort_key(recipes_by_id[recipe_id], item_class))
+        result.append(
+            MaterialRecipeGroup(
+                item_class=item_class,
+                item_name=item_names.get(item_class) or item_class,
+                material_category=material_categories.get(item_class, ""),
+                recipe_ids=tuple(recipe_ids),
+            )
+        )
+    result.sort(key=lambda group: (group.item_name.lower(), group.item_class))
+    return tuple(result)
+
+
+def _build_replacement_groups(
+    recipes: tuple[Recipe, ...],
+    item_names: dict[str, str],
+    material_categories: dict[str, str],
+) -> tuple[ReplacementGroup, ...]:
+    recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
+    base_recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
+
+    for recipe in recipes:
+        if not recipe.outputs or _recipe_has_flag(recipe, _RECIPE_FLAG_UNPACKAGE):
+            continue
+        item_class = recipe.outputs[0].item_class
+        if item_class not in material_categories:
+            continue
+        recipe_ids = recipe_ids_by_material[item_class]
+        if recipe.recipe_id not in recipe_ids:
+            recipe_ids.append(recipe.recipe_id)
+        if not recipe.is_alternate and not _recipe_has_flag(recipe, _RECIPE_FLAG_RAW_MATERIAL):
+            base_recipe_ids = base_recipe_ids_by_material[item_class]
+            if recipe.recipe_id not in base_recipe_ids:
+                base_recipe_ids.append(recipe.recipe_id)
+
+    recipes_by_id = {recipe.recipe_id: recipe for recipe in recipes}
+    result: list[ReplacementGroup] = []
+    for item_class, recipe_ids in recipe_ids_by_material.items():
+        recipe_ids.sort(key=lambda recipe_id: _replacement_group_recipe_sort_key(recipes_by_id[recipe_id]))
+        base_recipe_ids = base_recipe_ids_by_material.get(item_class, [])
+        base_recipe_ids.sort(key=lambda recipe_id: _replacement_group_recipe_sort_key(recipes_by_id[recipe_id]))
+        result.append(
+            ReplacementGroup(
+                item_class=item_class,
+                item_name=item_names.get(item_class) or item_class,
+                recipe_ids=tuple(recipe_ids),
+                base_recipe_ids=tuple(base_recipe_ids),
+            )
+        )
+
+    result.sort(key=lambda group: (group.item_name.lower(), group.item_class))
+    return tuple(result)
+
+
+def _material_group_recipe_sort_key(recipe: Recipe, item_class: str) -> tuple[int, int, str, str]:
+    relation_rank = 0 if recipe.outputs and recipe.outputs[0].item_class == item_class else 1
+    alternate_rank, name, recipe_id = _replacement_group_recipe_sort_key(recipe)
+    return relation_rank, alternate_rank, name, recipe_id
 
 
 def _load_power_groups(rows: list[list[Any]]) -> tuple[PowerGroup, ...]:
@@ -1713,98 +1814,6 @@ def _load_recipes(
             )
         )
     return tuple(recipes)
-
-
-def _load_material_recipe_groups(rows: list[list[Any]], recipes: tuple[Recipe, ...]) -> tuple[MaterialRecipeGroup, ...]:
-    recipes_by_id = {recipe.recipe_id: recipe for recipe in recipes}
-    recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
-    material_names: dict[str, str] = {}
-    material_categories: dict[str, str] = {}
-
-    for row in _material_recipe_dict_rows(rows):
-        item_class = _text(row.get("MaterialClassName"))
-        if not item_class:
-            continue
-        material_names[item_class] = _text(row.get("MaterialName")) or item_class
-        material_categories[item_class] = _text(row.get("MaterialCategory"))
-        recipe_id = _material_recipe_id(row.get("RecipeID"))
-        if not recipe_id:
-            continue
-        recipe = recipes_by_id.get(recipe_id)
-        if recipe is None or _recipe_has_flag(recipe, _RECIPE_FLAG_UNPACKAGE):
-            continue
-        group_recipe_ids = recipe_ids_by_material[item_class]
-        if recipe_id not in group_recipe_ids:
-            group_recipe_ids.append(recipe_id)
-
-    result = [
-        MaterialRecipeGroup(
-            item_class=item_class,
-            item_name=material_names.get(item_class) or item_class,
-            material_category=material_categories.get(item_class, ""),
-            recipe_ids=tuple(recipe_ids),
-        )
-        for item_class, recipe_ids in recipe_ids_by_material.items()
-        if recipe_ids
-    ]
-    result.sort(key=lambda group: (group.item_name.lower(), group.item_class))
-    return tuple(result)
-
-
-def _load_material_recipe_replacement_groups(rows: list[list[Any]], recipes: tuple[Recipe, ...]) -> tuple[ReplacementGroup, ...]:
-    recipes_by_id = {recipe.recipe_id: recipe for recipe in recipes}
-    recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
-    base_recipe_ids_by_material: dict[str, list[str]] = defaultdict(list)
-    material_names: dict[str, str] = {}
-
-    for row in _material_recipe_dict_rows(rows):
-        item_class = _text(row.get("MaterialClassName"))
-        if not item_class:
-            continue
-        material_names[item_class] = _text(row.get("MaterialName")) or item_class
-        recipe_id = _material_recipe_id(row.get("RecipeID"))
-        if not recipe_id:
-            continue
-        recipe = recipes_by_id.get(recipe_id)
-        if recipe is None or not recipe.outputs or _recipe_has_flag(recipe, _RECIPE_FLAG_UNPACKAGE):
-            continue
-        if recipe.outputs[0].item_class != item_class:
-            continue
-        group_recipe_ids = recipe_ids_by_material[item_class]
-        if recipe_id not in group_recipe_ids:
-            group_recipe_ids.append(recipe_id)
-        if not recipe.is_alternate and not _recipe_has_flag(recipe, _RECIPE_FLAG_RAW_MATERIAL):
-            base_recipe_ids = base_recipe_ids_by_material[item_class]
-            if recipe_id not in base_recipe_ids:
-                base_recipe_ids.append(recipe_id)
-
-    result: list[ReplacementGroup] = []
-    for item_class, recipe_ids in recipe_ids_by_material.items():
-        if not recipe_ids:
-            continue
-        first_recipe = recipes_by_id.get(recipe_ids[0])
-        item_name = material_names.get(item_class)
-        if not item_name and first_recipe and first_recipe.outputs:
-            item_name = first_recipe.outputs[0].item_name
-        base_recipe_ids = base_recipe_ids_by_material.get(item_class, [])
-        result.append(
-            ReplacementGroup(
-                item_class=item_class,
-                item_name=item_name or item_class,
-                recipe_ids=tuple(recipe_ids),
-                base_recipe_ids=tuple(base_recipe_ids),
-            )
-        )
-
-    result.sort(key=lambda group: (group.item_name.lower(), group.item_class))
-    return tuple(result)
-
-
-def _material_recipe_id(value: Any) -> str:
-    recipe_id = _text(value)
-    if recipe_id.lower() == "none":
-        return ""
-    return recipe_id
 
 
 def _replacement_group_recipe_sort_key(recipe: Recipe) -> tuple[int, str, str]:
