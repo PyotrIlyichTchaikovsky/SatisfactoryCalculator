@@ -11,6 +11,11 @@
   "output": {
     "data_xlsx": "../recipe_web/data/Data.xlsx"
   },
+  "icons": {
+    "copy_device_icons": true,
+    "copy_material_icons": true,
+    "fmodel_exports_dir": "F:/Tools/FModel/Output/Exports"
+  },
   "native_classes": {
     "items": [
       "FGItemDescriptor",
@@ -68,13 +73,14 @@
   },
   "sheets": {
     "README": true,
-    "MaterialRecipe": true,
+    "Materials": true,
     "PowerGroup": true,
     "Devices": true,
-    "Items": true,
     "RecipesLong": true,
     "RecipeInputs": true,
     "RecipeOutputs": true,
+    "BaseRecipeRequirements": true,
+    "AllRecipeRequirements": true,
     "VersionInfo": true,
     "Validation": true
   }

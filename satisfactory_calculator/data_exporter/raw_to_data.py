@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +25,7 @@ DEFAULT_POWER_RECIPE_NATIVE_CLASSES = (
     "FGBuildableGeneratorNuclear",
     "FGBuildableGeneratorGeoThermal",
 )
+UNLOCK_RECIPE_CLASS_RE = re.compile(r"\.([A-Za-z0-9_]+_C)'")
 
 sys.path.insert(0, str(PROJECT_ROOT))
 from satisfactory_calculator.data_exporter import game_rawdata_exporter as raw  # noqa: E402
@@ -105,7 +107,9 @@ def build_data(config: dict[str, Any], config_path: Path, raw_json_path: Path, d
         raw.add_power_items(items)
 
     class_native_names = class_native_name_index(classes)
+    mam_recipe_ids = recipe_ids_unlocked_by_mam(classes)
     recipes = raw.build_recipes(classes, display_names, items, raw_json_path)
+    mark_mam_recipes_as_base(recipes, mam_recipe_ids)
     recipes = keep_recipes_with_allowed_produced_in_classes(
         recipes,
         class_native_names,
@@ -132,6 +136,7 @@ def build_data(config: dict[str, Any], config_path: Path, raw_json_path: Path, d
     workbook_args = build_args(config_path, raw_json_path, data_xlsx_path)
     raw.ensure_icon_directories(data_xlsx_path)
     sheets = raw.build_sheets(recipes, items, devices, raw_json_path, workbook_args)
+    sheets.extend(build_recipe_requirement_sheets(config, data_xlsx_path, sheets))
     sheets = filter_sheets(sheets, config.get("sheets", {}))
     raw.write_xlsx(data_xlsx_path, sheets)
 
@@ -195,6 +200,33 @@ def class_native_name_index(classes: Sequence[tuple[str, dict[str, Any]]]) -> di
     return result
 
 
+def recipe_ids_unlocked_by_mam(classes: Sequence[tuple[str, dict[str, Any]]]) -> set[str]:
+    recipe_ids: set[str] = set()
+    for native_class, obj in classes:
+        if short_native_name(native_class) != "FGSchematic":
+            continue
+        if raw.string_value(obj.get("mType")) != "EST_MAM":
+            continue
+        unlocks = obj.get("mUnlocks")
+        if not isinstance(unlocks, list):
+            continue
+        for unlock in unlocks:
+            if not isinstance(unlock, dict) or raw.string_value(unlock.get("Class")) != "BP_UnlockRecipe_C":
+                continue
+            recipe_ids.update(unlock_recipe_class_refs(unlock.get("mRecipes")))
+    return recipe_ids
+
+
+def unlock_recipe_class_refs(value: Any) -> set[str]:
+    return set(UNLOCK_RECIPE_CLASS_RE.findall(raw.string_value(value)))
+
+
+def mark_mam_recipes_as_base(recipes: Sequence[raw.Recipe], mam_recipe_ids: set[str]) -> None:
+    for recipe in recipes:
+        if recipe.recipe_id in mam_recipe_ids:
+            recipe.is_alternate = False
+
+
 def keep_recipes_with_allowed_produced_in_classes(
     recipes: Sequence[raw.Recipe],
     class_native_names: dict[str, str],
@@ -248,6 +280,176 @@ def filter_sheets(sheets: Sequence[raw.Worksheet], sheet_config: Any) -> list[ra
     if not enabled:
         raise ConfigError("sheets must enable at least one worksheet")
     return [sheet for sheet in sheets if sheet.name in enabled]
+
+
+def build_recipe_requirement_sheets(
+    config: dict[str, Any],
+    data_xlsx_path: Path,
+    base_sheets: Sequence[raw.Worksheet],
+) -> list[raw.Worksheet]:
+    sheet_config = config.get("sheets", {})
+    if not isinstance(sheet_config, dict):
+        return []
+    wanted = {
+        sheet_name
+        for sheet_name in ("BaseRecipeRequirements", "AllRecipeRequirements")
+        if bool(sheet_config.get(sheet_name))
+    }
+    if not wanted:
+        return []
+
+    from satisfactory_calculator.recipe_web.production_planner_core import PlannerError, ProductionPlanner
+
+    temp_path = data_xlsx_path.with_name(f".{data_xlsx_path.stem}.requirements.tmp.xlsx")
+    raw.write_xlsx(temp_path, base_sheets)
+    try:
+        planner = ProductionPlanner.from_excel(temp_path)
+        result: list[raw.Worksheet] = []
+        if "BaseRecipeRequirements" in wanted:
+            result.append(
+                raw.Worksheet(
+                    "BaseRecipeRequirements",
+                    build_recipe_requirement_rows(
+                        planner,
+                        sorted(planner.default_enabled_recipe_ids),
+                        "Base",
+                        PlannerError,
+                    ),
+                )
+            )
+        if "AllRecipeRequirements" in wanted:
+            result.append(
+                raw.Worksheet(
+                    "AllRecipeRequirements",
+                    build_recipe_requirement_rows(
+                        planner,
+                        sorted(planner.selectable_recipe_ids),
+                        "All",
+                        PlannerError,
+                    ),
+                )
+            )
+        return result
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def build_recipe_requirement_rows(
+    planner: Any,
+    enabled_recipe_ids: Sequence[str],
+    mode: str,
+    planner_error_type: type[Exception],
+) -> list[list[Any]]:
+    rows: list[list[Any]] = [
+        [
+            "TargetClassName",
+            "TargetName",
+            "TargetUnit",
+            "TargetRate",
+            "RecipeMode",
+            "Status",
+            "RecipeID",
+            "RecipeName",
+            "RecipeScale",
+            "RecipeOutput",
+            "Failure",
+        ]
+    ]
+    active_recipe_ids = set(enabled_recipe_ids)
+
+    for item in planner.items_list:
+        try:
+            parsed_targets = planner._parse_targets([{"itemClass": item.class_name, "rate": 1.0}])
+            solution = planner._solve_linear_plan(parsed_targets, active_recipe_ids, set())
+        except planner_error_type as exc:
+            rows.append(
+                [
+                    item.class_name,
+                    item.name,
+                    item.unit,
+                    1,
+                    mode,
+                    "Infeasible",
+                    "",
+                    "",
+                    "",
+                    "",
+                    str(exc),
+                ]
+            )
+            continue
+
+        recipe_runs = solution.get("recipeRuns", [])
+        if recipe_runs:
+            for run in recipe_runs:
+                rows.append(
+                    [
+                        item.class_name,
+                        item.name,
+                        item.unit,
+                        1,
+                        mode,
+                        "OK",
+                        run.get("id", ""),
+                        run.get("recipe", {}).get("name", ""),
+                        raw.clean_number(float(run.get("scale") or 0.0)),
+                        requirement_output_text(run.get("outputs", [])),
+                        "",
+                    ]
+                )
+            continue
+
+        raw_totals = solution.get("rawTotals", [])
+        if raw_totals:
+            for raw_total in raw_totals:
+                rows.append(
+                    [
+                        item.class_name,
+                        item.name,
+                        item.unit,
+                        1,
+                        mode,
+                        "ExternalInput",
+                        "",
+                        "External Input",
+                        raw.clean_number(float(raw_total.get("rate") or 0.0)),
+                        raw_total.get("item", {}).get("name", ""),
+                        "",
+                    ]
+                )
+            continue
+
+        rows.append(
+            [
+                item.class_name,
+                item.name,
+                item.unit,
+                1,
+                mode,
+                "NoRecipe",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+
+    return rows
+
+
+def requirement_output_text(outputs: Sequence[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for output in outputs:
+        item = output.get("item", {})
+        name = item.get("name") or item.get("className") or ""
+        rate = output.get("rate", 0)
+        unit = output.get("unit") or item.get("unit") or ""
+        parts.append(f"{name} {rate} {unit}/min".strip())
+    return " + ".join(parts)
 
 
 if __name__ == "__main__":

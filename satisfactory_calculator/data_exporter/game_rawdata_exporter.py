@@ -25,6 +25,8 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 RAW_DATA_DIR = SCRIPT_DIR / "raw_data"
 ICON_DIR_NAME = "icons"
 DEVICE_ICON_SUBDIR = "devices"
+MATERIAL_ICON_SUBDIR = "materials"
+POWER_ICON_FILE_NAME = "power.png"
 
 RECIPE_NATIVE_CLASS = "FGRecipe"
 ITEM_AMOUNT_RE = re.compile(
@@ -77,6 +79,8 @@ class ItemInfo:
     sink_points: str = ""
     native_class: str = ""
     energy_value: float = 0.0
+    icon_asset: str = ""
+    icon_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -502,6 +506,14 @@ def local_device_icon_path(device_class: str) -> str:
     return f"{ICON_DIR_NAME}/{DEVICE_ICON_SUBDIR}/{safe_file_stem(device_class)}.png"
 
 
+def local_material_icon_path(item_class: str) -> str:
+    return f"{ICON_DIR_NAME}/{MATERIAL_ICON_SUBDIR}/{safe_file_stem(item_class)}.png"
+
+
+def local_power_icon_path() -> str:
+    return f"{ICON_DIR_NAME}/{MATERIAL_ICON_SUBDIR}/{POWER_ICON_FILE_NAME}"
+
+
 def safe_file_stem(value: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._-")
     return stem or "icon"
@@ -527,6 +539,7 @@ def build_item_index(
 
         form = string_value(obj.get("mForm"))
         unit = unit_for_form(form)
+        icon_asset = icon_asset_for_object(obj)
         info = ItemInfo(
             class_name=class_name,
             display_name=display_names.get(class_name, humanize_class_name(class_name)),
@@ -536,6 +549,8 @@ def build_item_index(
             sink_points=string_value(obj.get("mResourceSinkPoints")),
             native_class=native_class,
             energy_value=float_value(obj.get("mEnergyValue")),
+            icon_asset=icon_asset,
+            icon_path=local_material_icon_path(class_name) if icon_asset else "",
         )
         items[class_name] = info
         if class_name.endswith("_C"):
@@ -551,6 +566,7 @@ def add_power_items(items: dict[str, ItemInfo]) -> None:
             form="RF_POWER",
             unit="MW",
             native_class=SYNTHETIC_POWER_GROUP_NATIVE_CLASS,
+            icon_path=local_power_icon_path(),
         )
         items[item_class] = info
         if item_class.endswith("_C"):
@@ -568,6 +584,7 @@ def ensure_power_member_item(
         form="RF_POWER",
         unit="MW",
         native_class=SYNTHETIC_POWER_NATIVE_CLASS,
+        icon_path=local_power_icon_path(),
     )
     items[item_class] = info
     if item_class.endswith("_C"):
@@ -915,7 +932,6 @@ def build_sheets(
         material_recipe_sheet,
         Worksheet("PowerGroup", build_power_group_rows(recipes, items)),
         Worksheet("Devices", build_devices_rows(recipes, devices)),
-        Worksheet("Items", build_items_rows(unique_items)),
         Worksheet("RecipesLong", build_recipes_long_rows(recipes, items, devices)),
         Worksheet("RecipeInputs", build_recipe_io_rows(recipes, input_side=True)),
         Worksheet("RecipeOutputs", build_recipe_io_rows(recipes, input_side=False)),
@@ -991,10 +1007,15 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
             recipes_by_output.setdefault(output.item_class, []).append(recipe)
             seen_outputs.add(output.item_class)
 
+    used_material_classes = {
+        ingredient.item_class
+        for recipe in recipes
+        for ingredient in [*recipe.inputs, *recipe.outputs]
+    }
     materials = [
         item
         for item in {info.class_name: info for info in items.values()}.values()
-        if not is_building_item(item)
+        if not is_building_item(item) and (item.class_name in used_material_classes or is_power_item(item))
     ]
     materials.sort(key=lambda item: (material_category_sort_key(material_category(item.class_name, item, output_classes)), item.display_name.lower(), item.class_name))
 
@@ -1010,6 +1031,8 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
             "MaterialClassName",
             "MaterialName",
             "MaterialCategory",
+            "Unit",
+            "Icon",
             "RecipeName",
             *[StyledCell(f"Input{index}", STYLE_INPUT) for index in range(1, max_inputs + 1)],
             *[StyledCell(f"Output{index}", STYLE_OUTPUT) for index in range(1, max_outputs + 1)],
@@ -1030,6 +1053,8 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
                     item.class_name,
                     item.display_name,
                     category,
+                    item.unit,
+                    item.icon_path,
                     "None",
                     *[StyledCell("", STYLE_INPUT) for _ in range(max_inputs)],
                     *[StyledCell("", STYLE_OUTPUT) for _ in range(max_outputs)],
@@ -1043,6 +1068,8 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
                 item.class_name if recipe_index == 0 else None,
                 item.display_name if recipe_index == 0 else None,
                 category if recipe_index == 0 else None,
+                item.unit if recipe_index == 0 else None,
+                item.icon_path if recipe_index == 0 else None,
                 recipe.recipe_name,
             ]
             for input_index in range(max_inputs):
@@ -1062,10 +1089,10 @@ def build_material_recipe_sheet(recipes: Sequence[Recipe], items: dict[str, Item
 
         end_row = len(rows)
         if end_row > start_row:
-            for column in range(1, 4):
+            for column in range(1, 6):
                 merges.append(MergeRange(start_row, column, end_row, column))
 
-    return Worksheet("MaterialRecipe", rows, merges)
+    return Worksheet("Materials", rows, merges)
 
 
 def unique_recipes(recipes: Sequence[Recipe]) -> list[Recipe]:
@@ -1374,13 +1401,14 @@ def build_readme_rows(
     return [
         ["Key", "Value"],
         ["Purpose", "Export real Docs.json recipes to a planning workbook."],
-        ["MainSheet", "MaterialRecipe"],
+        ["MainSheet", "Materials"],
         ["DeviceSheets", "Devices"],
         ["ConfigFile", str(args.config)],
         ["NoGeneratedExtractionRules", True],
         ["FilteringRule", "FGRecipe rows are included only when mProducedIn references a configured manufacturer NativeClass."],
         ["GeneratedPowerRecipes", "Configured generator NativeClasses are converted into virtual power recipes."],
         ["DeviceIconRule", "Device icon assets are Unreal texture references from Docs; IconPath points to the local icons/devices folder for image files."],
+        ["MaterialIconRule", "Material icons are Unreal texture references from Docs; Icon points to the local icons/materials folder for image files."],
         ["RecipeCount", len(recipes)],
         ["KnownItemCount", len({item.class_name for item in items.values()})],
         ["SourceDocsJson", str(docs_path)],
@@ -1527,7 +1555,7 @@ def build_version_rows(
         ["Lang", args.lang],
         ["RecipeFilter", recipe_filter],
         ["GeneratedPowerRecipes", generated_power_recipes],
-        ["MaterialRecipeOnly", args.wide_only],
+        ["MaterialsOnly", args.wide_only],
         ["DebugJson", args.debug_json],
     ]
 
@@ -1616,11 +1644,12 @@ def write_xlsx(path: Path, sheets: Sequence[Worksheet]) -> None:
 
 
 def ensure_icon_directories(workbook_path: Path) -> None:
-    device_icon_dir = workbook_path.parent / ICON_DIR_NAME / DEVICE_ICON_SUBDIR
-    device_icon_dir.mkdir(parents=True, exist_ok=True)
-    gitkeep = device_icon_dir / ".gitkeep"
-    if not gitkeep.exists():
-        gitkeep.write_text("", encoding="utf-8")
+    for subdir in (DEVICE_ICON_SUBDIR, MATERIAL_ICON_SUBDIR):
+        icon_dir = workbook_path.parent / ICON_DIR_NAME / subdir
+        icon_dir.mkdir(parents=True, exist_ok=True)
+        gitkeep = icon_dir / ".gitkeep"
+        if not gitkeep.exists():
+            gitkeep.write_text("", encoding="utf-8")
 
 
 def content_types_xml(sheet_count: int) -> str:
@@ -1868,8 +1897,7 @@ def extract_class_refs(value: Any) -> list[str]:
 
 
 def is_alternate_recipe(class_name: str, recipe_name: str) -> bool:
-    combined = f"{class_name} {recipe_name}".lower()
-    return "alternate" in combined or "alt_" in combined or "_alt" in combined
+    return recipe_name.strip().lower().startswith("alternate")
 
 
 def unit_for_form(form: str) -> str:

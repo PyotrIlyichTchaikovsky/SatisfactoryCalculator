@@ -1,51 +1,51 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Satisfactory &#x751f;&#x4ea7;&#x89c4;&#x5212;</title>
-  <link rel="stylesheet" href="production_planner.css?v=graph-highlight-20260609-1">
-  <script defer src="production_planner.js?v=graph-highlight-20260609-1"></script>
+  <title>Satisfactory Production Planner</title>
+  <link rel="stylesheet" href="production_planner.css?v=material-icons-20260612-1">
+  <script defer src="production_planner.js?v=material-icons-20260612-1"></script>
 </head>
 <body>
   <header class="app-header">
     <div>
-      <h1>Satisfactory &#x751f;&#x4ea7;&#x89c4;&#x5212;</h1>
-      <p id="dataSummary">&#x6b63;&#x5728;&#x8fde;&#x63a5;&#x751f;&#x4ea7;&#x89c4;&#x5212;&#x670d;&#x52a1;...</p>
+      <h1>Satisfactory Production Planner</h1>
+      <p id="dataSummary">Connecting to production planner service...</p>
     </div>
   </header>
 
   <main class="app-shell">
     <section class="input-panel" aria-labelledby="targetHeading">
       <div class="panel-title-row">
-        <h2 id="targetHeading">&#x751f;&#x4ea7;&#x76ee;&#x6807;</h2>
+        <h2 id="targetHeading">Production Targets</h2>
         <div class="panel-actions">
-          <button id="recipeFilterButton" class="secondary-button" type="button">&#x914d;&#x65b9;&#x7b5b;&#x9009;</button>
-          <button id="addTargetButton" class="secondary-button" type="button">&#x6dfb;&#x52a0;&#x7269;&#x54c1;</button>
+          <button id="recipeFilterButton" class="secondary-button" type="button">Recipe Filter</button>
+          <button id="addTargetButton" class="secondary-button" type="button">Add Item</button>
         </div>
       </div>
 
       <form id="plannerForm" autocomplete="off">
         <div id="targetRows" class="target-rows"></div>
         <div class="form-actions">
-          <button class="primary-button" type="submit">&#x8ba1;&#x7b97;</button>
+          <button class="primary-button" type="submit">Calculate</button>
         </div>
       </form>
     </section>
 
     <section class="result-panel" aria-labelledby="resultHeading">
       <div class="result-toolbar">
-        <h2 id="resultHeading">&#x7ed3;&#x679c;</h2>
+        <h2 id="resultHeading">Results</h2>
         <div class="result-actions">
-          <button id="resetLayoutButton" class="secondary-button compact-button" type="button">&#x91cd;&#x7f6e;&#x5e03;&#x5c40;</button>
-          <div class="tabs" role="tablist" aria-label="&#x7ed3;&#x679c;&#x89c6;&#x56fe;">
-            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">&#x65b9;&#x6848;&#x89c6;&#x56fe;</button>
-            <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false">&#x5408;&#x5e76;&#x8868;&#x683c;</button>
+          <button id="resetLayoutButton" class="secondary-button compact-button" type="button">Reset Layout</button>
+          <div class="tabs" role="tablist" aria-label="Result views">
+            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">Plan View</button>
+            <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false">Merged Table</button>
           </div>
         </div>
       </div>
 
-      <div id="statusMessage" class="status-message">&#x8bf7;&#x9009;&#x62e9;&#x4e00;&#x4e2a;&#x6216;&#x591a;&#x4e2a;&#x7269;&#x54c1;&#xff0c;&#x5e76;&#x8f93;&#x5165;&#x6bcf;&#x5206;&#x949f;&#x9700;&#x8981;&#x751f;&#x4ea7;&#x7684;&#x6570;&#x91cf;&#x3002;</div>
+      <div id="statusMessage" class="status-message">Select one or more items and enter the required production rate per minute.</div>
       <div id="treeView" class="view-panel"></div>
       <div id="tableView" class="view-panel hidden"></div>
     </section>
@@ -54,18 +54,21 @@
   <template id="targetRowTemplate">
     <div class="target-row">
       <div class="field item-field">
-        <label>&#x7269;&#x54c1;</label>
-        <input class="item-input" type="text" placeholder="AI Limiter">
+        <label>Item</label>
+        <div class="item-input-box">
+          <span class="target-item-icon empty" aria-hidden="true"></span>
+          <input class="item-input" type="text" placeholder="AI Limiter">
+        </div>
         <div class="suggestions" role="listbox"></div>
       </div>
       <div class="field amount-field">
-        <label>&#x6bcf;&#x5206;&#x949f;&#x6570;&#x91cf;</label>
+        <label>Rate per Minute</label>
         <div class="amount-box">
           <input class="amount-input" type="number" min="0" step="0.001" placeholder="60">
           <span class="unit-label">/ min</span>
         </div>
       </div>
-      <button class="remove-button" type="button" title="&#x5220;&#x9664;&#x7269;&#x54c1;" aria-label="&#x5220;&#x9664;&#x7269;&#x54c1;">&#x5220;&#x9664;</button>
+      <button class="remove-button" type="button" title="Remove item" aria-label="Remove item">Remove</button>
     </div>
   </template>
 </body>

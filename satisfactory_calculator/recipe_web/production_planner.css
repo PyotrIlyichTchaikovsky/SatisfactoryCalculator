@@ -150,6 +150,18 @@ h2 {
   position: relative;
 }
 
+.item-input-box {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #ffffff;
+}
+
 .item-input,
 .amount-input {
   width: 100%;
@@ -162,7 +174,42 @@ h2 {
 }
 
 .item-input {
-  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.target-item-icon,
+.suggestion-icon,
+.recipe-material-icon,
+.recipe-formula-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.target-item-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.target-item-icon.empty {
+  border: 1px dashed #cbd5e1;
+  border-radius: 5px;
+  background: #f8fafc;
+}
+
+.suggestion-icon,
+.recipe-material-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.recipe-formula-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .amount-box {
@@ -190,7 +237,7 @@ h2 {
   white-space: nowrap;
 }
 
-.item-input:focus,
+.item-input-box:focus-within,
 .amount-box:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
@@ -240,6 +287,13 @@ h2 {
   background: var(--accent-soft);
 }
 
+.suggestion-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .suggestion-name {
   max-width: 620px;
   overflow: hidden;
@@ -287,6 +341,22 @@ h2 {
 .remove-button:hover,
 .tab-button:hover {
   background: #edf3f5;
+}
+
+.secondary-button.is-disabled,
+.secondary-button.is-disabled:hover {
+  border-color: #d8dee6;
+  background: #f3f6f8;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.recipe-filter-toggle.active,
+.recipe-filter-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #d9f3ee;
+  color: #0f766e;
+  font-weight: 750;
 }
 
 .compact-button {
@@ -466,15 +536,23 @@ h2 {
   position: absolute;
   z-index: 5;
   display: grid;
-  grid-template-rows: auto minmax(32px, auto) auto;
-  gap: 4px;
-  padding: 8px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 8px;
   border: 2px solid #2e8dcc;
   border-radius: 2px;
   background: rgba(21, 89, 130, 0.92);
   color: #e8f3fb;
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
   transition: opacity 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease, outline-color 0.16s ease;
+}
+
+.graph-node.has-media {
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
 }
 
 .graph-node.dimmed {
@@ -513,27 +591,58 @@ h2 {
   padding-right: 28px;
 }
 
-.graph-node.recipe.draggable .graph-node-kind {
-  padding-left: 42px;
-}
-
 .graph-drag-handle {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  min-width: 36px;
-  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 999px;
-  padding: 0 7px;
-  background: rgba(0, 0, 0, 0.22);
+  border-radius: 4px;
+  padding: 4px;
+  background: rgba(8, 13, 18, 0.36);
   color: rgba(255, 255, 255, 0.88);
   cursor: grab;
   font-size: 11px;
   font-weight: 850;
-  line-height: 20px;
+  line-height: 1;
+  overflow: hidden;
   text-align: center;
+  touch-action: none;
   user-select: none;
+}
+
+.graph-device-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.42));
+}
+
+.graph-material-media {
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 4px;
+  padding: 6px;
+  background: rgba(8, 13, 18, 0.28);
+  overflow: hidden;
+}
+
+.graph-material-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.42));
 }
 
 .graph-drag-zone {
@@ -555,6 +664,7 @@ h2 {
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 2;
   display: inline-grid;
   place-items: center;
   width: 24px;
@@ -586,13 +696,39 @@ h2 {
 
 .recipe-filter-dialog {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   width: min(980px, calc(100vw - 36px));
   max-height: min(860px, calc(100vh - 36px));
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
+.recipe-filter-dialog.dragging {
+  box-shadow: 0 28px 78px rgba(15, 23, 42, 0.34);
+}
+
+.recipe-filter-drag-handle {
+  display: grid;
+  place-items: center;
+  height: 20px;
+  border-bottom: 1px solid #edf0f4;
+  background: #f8fafc;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.recipe-filter-dialog.dragging .recipe-filter-drag-handle {
+  cursor: grabbing;
+}
+
+.recipe-filter-drag-grip {
+  width: 46px;
+  height: 4px;
+  border-radius: 999px;
+  background: #cbd5e1;
 }
 
 .recipe-filter-header,
@@ -623,6 +759,14 @@ h2 {
 .recipe-filter-summary {
   color: var(--muted);
   font-size: 12px;
+}
+
+.recipe-filter-notice {
+  max-width: 760px;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .recipe-filter-tools {
@@ -668,6 +812,10 @@ h2 {
 }
 
 .recipe-material-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-weight: 700;
 }
 
@@ -689,17 +837,68 @@ h2 {
   background: #f8fbfb;
 }
 
+.recipe-row.base-locked {
+  color: #64748b;
+  cursor: default;
+}
+
+.recipe-row.base-locked:hover {
+  background: #ffffff;
+}
+
+.recipe-filter-checkbox:disabled {
+  accent-color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.recipe-row.required {
+  background: #fbfefc;
+}
+
+.recipe-row.focused {
+  background: #f4fbfa;
+  box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.42);
+}
+
 .recipe-row-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   font-weight: 650;
 }
 
+.recipe-row-tag {
+  flex: 0 0 auto;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .recipe-row-formula {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
   margin-top: 2px;
   color: var(--muted);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  white-space: normal;
+}
+
+.recipe-formula-side {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+.recipe-formula-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .recipe-switch-overlay {
@@ -826,11 +1025,26 @@ h2 {
   background: rgba(84, 55, 119, 0.94);
 }
 
+.graph-node-content {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.graph-node.has-media .graph-node-content {
+  align-content: center;
+}
+
 .graph-node-kind {
+  min-width: 0;
+  overflow: hidden;
   color: rgba(255, 255, 255, 0.72);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .graph-node-title {
@@ -840,53 +1054,38 @@ h2 {
   font-size: 14px;
   font-weight: 800;
   line-height: 1.2;
-  min-height: 32px;
+  min-height: 0;
+  overflow-wrap: anywhere;
   text-overflow: ellipsis;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
 
+.graph-node.has-media .graph-node-title {
+  -webkit-line-clamp: 3;
+}
+
 .graph-node-scale {
+  display: block;
+  overflow: hidden;
   color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
   font-weight: 750;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .graph-node-meta {
+  display: -webkit-box;
+  overflow: hidden;
   color: rgba(255, 255, 255, 0.82);
   font-size: 13px;
   font-weight: 750;
-}
-
-.graph-node-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 1px;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: #edf3f5;
-  color: #35505e;
-  font-size: 12px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.badge.raw {
-  background: #fff1bd;
-  color: var(--raw);
-}
-
-.badge.alt {
-  background: #e8edf8;
-  color: #294b8f;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .merged-table-wrap {

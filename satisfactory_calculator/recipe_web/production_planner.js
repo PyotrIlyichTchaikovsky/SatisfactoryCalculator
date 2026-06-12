@@ -37,6 +37,7 @@
   let activePreferredPlan = [];
   let activeGraphDrag = null;
   let activeGraphPan = null;
+  let activeRecipeFilterDrag = null;
   let selectedGraphRecipeId = "";
   let selectedGraphHighlightDepth = 1;
   let suppressNextGraphBlankClick = false;
@@ -70,7 +71,7 @@
     try {
       const [summary, itemPayload, recipePayload] = await Promise.all([
         fetchJson("/api/summary"),
-        fetchJson("/api/items"),
+        fetchJson("/api/materials"),
         fetchJson("/api/recipes"),
       ]);
       items = Array.isArray(itemPayload.items) ? itemPayload.items : [];
@@ -87,7 +88,7 @@
       if (!targetRows.querySelector(".target-row")) {
         addTargetRow(null, "", { focus: false, save: false });
       }
-      dataSummary.textContent = "无法连接生产规划服务";
+      dataSummary.textContent = "Unable to connect to the production planner service";
       setStatus(`Failed to load server data: ${error.message}. Start recipe_web/production_planner_server.py and reload.`, true);
     }
   }
@@ -100,7 +101,7 @@
     activatePlanCacheForCurrentTargets();
     savePlannerState();
 
-    setStatus("正在请求服务端计算...", false);
+    setStatus("Requesting calculation from the server...", false);
     try {
       const result = await fetchJson("/api/plan", {
         method: "POST",
@@ -113,6 +114,10 @@
           enabledRecipeIds: selectedRecipeIdsPayload(),
         }),
       });
+      if (result.recipeExpansionRequired) {
+        handleRecipeExpansionRequired(result, targets);
+        return;
+      }
       reconcilePreferredPlan(result);
       lastServerResult = clonePlannerResult(result);
       lastServerTargets = targetSnapshotsFromTargets(targets);
@@ -138,6 +143,72 @@
       treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
       tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
     }
+  }
+
+  function handleRecipeExpansionRequired(result, targets) {
+    const requiredRecipeIds = normalizedRecipeIdList(result.requiredRecipeIds);
+    lastServerResult = null;
+    lastServerTargets = [];
+    lastServerPlanSignature = "";
+
+    if (!requiredRecipeIds.length) {
+      setStatus(`Calculation failed: ${result.failure || "current recipe selection cannot satisfy the target."}`, true);
+      treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
+      tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
+      return;
+    }
+
+    requiredRecipeIds.forEach((recipeId) => selectedRecipeIds.add(recipeId));
+    savePlannerState();
+    updateRecipeFilterButton();
+
+    const targetText = targetListText(result.targets, targets);
+    const notice = result.message || `Producing ${targetText} requires the following recipes.`;
+    openRecipeFilterDialog({
+      filterRecipeIds: requiredRecipeIds,
+      notice: `${notice} They have been selected automatically.`,
+    });
+    setStatus(
+      `The current recipe selection cannot produce ${targetText}. Added ${formatInteger(requiredRecipeIds.length)} missing recipe(s); calculate again.`,
+      true,
+    );
+    treeView.replaceChildren(makeEmptyMessage("The recipe filter is open and the missing recipes have been selected. Calculate again."));
+    tableView.replaceChildren(makeEmptyMessage("The recipe filter is open and the missing recipes have been selected. Calculate again."));
+  }
+
+  function normalizedRecipeIdList(values) {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+    return Array.from(
+      new Set(
+        values
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  function normalizeRecipeIdSet(values) {
+    return new Set(normalizedRecipeIdList(values));
+  }
+
+  function targetListText(resultTargets, fallbackTargets) {
+    const source = Array.isArray(resultTargets) && resultTargets.length
+      ? resultTargets.map((target) => ({
+        item: target.item,
+        rate: target.rate,
+      }))
+      : (fallbackTargets || []);
+    const parts = source
+      .map((target) => {
+        const item = target.item || {};
+        const name = item.name || item.className || "target";
+        const unit = item.unit || "items";
+        return `${name} ${formatNumber(target.rate)} ${unit}/min`;
+      })
+      .filter(Boolean);
+    return parts.length ? parts.join(", ") : "the current target";
   }
 
   async function fetchJson(url, options = {}) {
@@ -226,10 +297,12 @@
         selectedRecipeIds.add(recipeId);
       }
     });
+    ensureDefaultRecipesSelected();
     updateRecipeFilterButton();
   }
 
   function selectedRecipeIdsPayload() {
+    ensureDefaultRecipesSelected();
     return Array.from(selectedRecipeIds).sort();
   }
 
@@ -243,8 +316,45 @@
     }
     const total = Array.isArray(recipeCatalog.selectableRecipeIds) ? recipeCatalog.selectableRecipeIds.length : 0;
     recipeFilterButton.textContent = total
-      ? `配方筛选 ${formatInteger(selectedRecipeIds.size)}/${formatInteger(total)}`
-      : "配方筛选";
+      ? `Recipe Filter ${formatInteger(selectedRecipeIds.size)}/${formatInteger(total)}`
+      : "Recipe Filter";
+  }
+
+  function defaultRecipeIdSet() {
+    return normalizeRecipeIdSet(recipeCatalog.defaultEnabledRecipeIds);
+  }
+
+  function selectableRecipeIdList() {
+    return normalizedRecipeIdList(recipeCatalog.selectableRecipeIds);
+  }
+
+  function selectableRecipeIdSet() {
+    return new Set(selectableRecipeIdList());
+  }
+
+  function ensureDefaultRecipesSelected() {
+    const selectable = selectableRecipeIdSet();
+    defaultRecipeIdSet().forEach((recipeId) => {
+      if (selectable.has(recipeId)) {
+        selectedRecipeIds.add(recipeId);
+      }
+    });
+  }
+
+  function isDefaultRecipeId(recipeId) {
+    return defaultRecipeIdSet().has(String(recipeId || "").trim());
+  }
+
+  function selectedAlternateRecipeCount() {
+    const defaults = defaultRecipeIdSet();
+    return selectableRecipeIdList()
+      .filter((recipeId) => !defaults.has(recipeId) && selectedRecipeIds.has(recipeId))
+      .length;
+  }
+
+  function allSelectableRecipesSelected() {
+    const selectable = selectableRecipeIdList();
+    return Boolean(selectable.length) && selectable.every((recipeId) => selectedRecipeIds.has(recipeId));
   }
 
   function restoreTargetRows(targets) {
@@ -564,6 +674,7 @@
       activatePlanCacheForCurrentTargets();
       delete row.dataset.itemClass;
       updateUnitLabel(row, null);
+      updateTargetItemIcon(row, null);
       renderSuggestions(row, itemInput.value);
       activatePlanCacheForCurrentTargets();
       savePlannerState();
@@ -638,12 +749,15 @@
       const name = document.createElement("span");
       name.className = "suggestion-name";
       name.textContent = item.name;
+      const main = document.createElement("span");
+      main.className = "suggestion-main";
+      main.append(makeMaterialIcon(item, "suggestion-icon"), name);
 
       const meta = document.createElement("span");
       meta.className = "suggestion-meta";
       meta.textContent = itemListMetaText(item);
 
-      option.append(name, meta);
+      option.append(main, meta);
       suggestions.appendChild(option);
     });
     suggestions.classList.add("open");
@@ -696,12 +810,21 @@
     row.dataset.itemClass = item.className;
     row.querySelector(".item-input").value = item.name;
     updateUnitLabel(row, item);
+    updateTargetItemIcon(row, item);
     closeSuggestions(row);
     activatePlanCacheForCurrentTargets();
   }
 
   function updateUnitLabel(row, item) {
     row.querySelector(".unit-label").textContent = item ? `${item.unit}/min` : "/ min";
+  }
+
+  function updateTargetItemIcon(row, item) {
+    const icon = row.querySelector(".target-item-icon");
+    if (!icon) {
+      return;
+    }
+    setMaterialIconBackground(icon, item);
   }
 
   function searchItems(query) {
@@ -757,14 +880,14 @@
 
       const item = selectedRowItem(row);
       if (!item) {
-        setStatus(`无法匹配物品：${rawName || "空输入"}`, true);
+        setStatus(`Unable to match item: ${rawName || "empty input"}`, true);
         itemInput.focus();
         return [];
       }
 
       const rate = Number(rawAmount);
       if (!Number.isFinite(rate) || rate <= 0) {
-        setStatus(`请输入 ${item.name} 的正数每分钟产量。`, true);
+        setStatus(`Enter a positive per-minute production rate for ${item.name}.`, true);
         amountInput.focus();
         return [];
       }
@@ -773,7 +896,7 @@
     }
 
     if (!targets.length) {
-      setStatus("至少添加一个目标物品，并输入每分钟数量。", true);
+      setStatus("Add at least one target item and enter a per-minute rate.", true);
     }
     return targets;
   }
@@ -810,7 +933,7 @@
     storeCurrentPreferredPlan();
     lastServerPlanSignature = planSignature();
     if (options.updateStatus) {
-      setStatus(`已按 ${formatNumber(scaleFactor)}x 同比缩放当前结果，未重新请求服务器。`, false);
+      setStatus(`Scaled the current result by ${formatNumber(scaleFactor)}x without requesting the server again.`, false);
     }
     return true;
   }
@@ -971,7 +1094,7 @@
   function renderGraphView(result, options = {}) {
     const graph = buildFlowGraph(result);
     if (!graph.nodes.length) {
-      treeView.replaceChildren(makeEmptyMessage("尚未计算生产目标。"));
+      treeView.replaceChildren(makeEmptyMessage("No production target has been calculated yet."));
       return;
     }
 
@@ -1043,7 +1166,7 @@
         type: "raw",
         column: 0,
         title: raw.item.name,
-        meta: `${formatNumber(rate)} ${raw.item.unit}/min · ${materialCategoryText(raw.item, "原始材料")}`,
+        meta: `${formatNumber(rate)} ${raw.item.unit}/min`,
         item: raw.item,
         recipeSwitch: rawRecipeSwitch(raw),
         edgeColor: "rgb(45, 126, 192)",
@@ -1057,7 +1180,7 @@
     });
 
     recipeRuns.forEach((run) => {
-      const color = recipeColor(run.recipe.name);
+      const color = recipeColor(recipeColorKeyForRun(run));
       const node = addGraphNode(nodes, {
         id: run.id,
         type: "recipe",
@@ -1177,12 +1300,35 @@
   }
 
   function itemListMetaText(item) {
-    const category = materialCategoryText(item, item?.producible ? "" : "原始材料");
-    return category ? `${item.unit} 路 ${category}` : item.unit;
+    const category = materialCategoryText(item, item?.producible ? "" : "Raw material");
+    return category ? `${item.unit} · ${category}` : item.unit;
   }
 
   function materialCategoryText(item, fallback = "") {
     return String(item?.materialCategory || fallback || "").trim();
+  }
+
+  function materialIconPath(item) {
+    return String(item?.iconPath || "").trim();
+  }
+
+  function setMaterialIconBackground(element, item) {
+    const iconPath = materialIconPath(item);
+    element.classList.toggle("empty", !iconPath);
+    element.style.backgroundImage = iconPath ? `url("${cssUrl(iconPath)}")` : "";
+    element.title = iconPath ? (item?.name || item?.className || "") : "";
+  }
+
+  function makeMaterialIcon(item, className = "material-icon") {
+    const icon = document.createElement("span");
+    icon.className = className;
+    icon.setAttribute("aria-hidden", "true");
+    setMaterialIconBackground(icon, item);
+    return icon;
+  }
+
+  function cssUrl(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
   function graphTargetAllocations(result, targets) {
@@ -1788,6 +1934,8 @@
 
   function renderGraphNode(node, graph) {
     const switchRecipe = graphNodeSwitchRecipe(node);
+    const hasRecipeFilterShortcut = node.type === "recipe";
+    const hasSwitchButton = hasRecipeFilterShortcut || canSwitchRecipe(switchRecipe);
     const card = document.createElement("article");
     card.className = `graph-node ${node.type}${node.alternate ? " alternate" : ""}`;
     card.dataset.nodeId = node.id;
@@ -1804,7 +1952,7 @@
     if (node.type === "recipe") {
       card.classList.add("draggable");
     }
-    if (canSwitchRecipe(switchRecipe)) {
+    if (hasSwitchButton) {
       card.classList.add("has-switch-button");
     }
     card.style.left = `${node.x}px`;
@@ -1818,66 +1966,94 @@
       card.style.borderColor = node.borderColor;
     }
 
-    if (canSwitchRecipe(switchRecipe)) {
+    if (hasSwitchButton) {
       const switchButton = document.createElement("button");
       switchButton.type = "button";
       switchButton.className = "switch-recipe-button";
-      switchButton.textContent = "\u6362";
-      switchButton.title = "Switch the recipe used for this material";
-      switchButton.setAttribute("aria-label", `Switch recipe for ${switchRecipe.primaryOutput?.name || switchRecipe.name || node.title}`);
+      switchButton.textContent = "R";
+      switchButton.title = hasRecipeFilterShortcut ? "Show this recipe in the recipe filter" : "Switch the recipe used for this material";
+      switchButton.setAttribute(
+        "aria-label",
+        hasRecipeFilterShortcut
+          ? `Show ${node.recipe?.name || node.title} in the recipe filter`
+          : `Switch recipe for ${switchRecipe.primaryOutput?.name || switchRecipe.name || node.title}`,
+      );
       switchButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        openRecipeSwitchDialog(switchRecipe);
+        if (hasRecipeFilterShortcut) {
+          openRecipeFilterDialog({ focusTarget: recipeFilterFocusFromGraphRecipe(node.recipe) });
+        } else {
+          openRecipeSwitchDialog(switchRecipe);
+        }
       });
       card.appendChild(switchButton);
     }
 
+    let media = null;
     if (node.type === "recipe") {
-      const handle = document.createElement("div");
-      handle.className = "graph-drag-handle";
-      handle.textContent = "拖动";
-      handle.title = "按住拖动配方节点";
-      bindGraphDragStart(handle, node, graph);
-      card.appendChild(handle);
+      media = document.createElement("div");
+      media.className = "graph-node-media graph-drag-handle";
+      media.title = node.recipe?.deviceIcons?.[0]?.name
+        ? `Drag recipe node · ${node.recipe.deviceIcons[0].name}`
+        : "Drag recipe node";
+      const iconPath = String(node.recipe?.deviceIconPath || "").trim();
+      if (iconPath) {
+        const icon = document.createElement("img");
+        icon.className = "graph-device-icon";
+        icon.src = iconPath;
+        icon.alt = node.recipe?.deviceIcons?.[0]?.name || "Production building";
+        icon.draggable = false;
+        media.appendChild(icon);
+      } else {
+        media.textContent = "Drag";
+      }
+      bindGraphDragStart(media, node, graph);
+      card.classList.add("has-media");
+    } else {
+      const iconPath = materialIconPath(node.item);
+      if (iconPath) {
+        media = document.createElement("div");
+        media.className = "graph-node-media graph-material-media";
+        const icon = document.createElement("img");
+        icon.className = "graph-material-icon";
+        icon.src = iconPath;
+        icon.alt = node.item?.name || node.title || "Material";
+        icon.draggable = false;
+        media.appendChild(icon);
+        card.classList.add("has-media");
+      }
     }
+
+    const content = document.createElement("div");
+    content.className = "graph-node-content";
 
     const kind = document.createElement("div");
     kind.className = "graph-node-kind";
     kind.textContent = graphNodeKindText(node);
     if (node.type === "recipe") {
-      kind.title = "按住这里拖动配方节点";
+      kind.title = "Drag recipe node from here";
       bindGraphDragStart(kind, node, graph);
     }
 
     const title = document.createElement("div");
     title.className = "graph-node-title";
     title.textContent = node.title;
+
+    content.append(kind, title);
     if (node.type === "recipe" && node.meta) {
       const scale = document.createElement("span");
       scale.className = "graph-node-scale";
       scale.textContent = node.meta;
-      title.append(" ", scale);
+      content.appendChild(scale);
     }
-
-    card.append(kind, title);
     if (node.type !== "recipe" && node.meta) {
       const meta = document.createElement("div");
       meta.className = "graph-node-meta";
       meta.textContent = node.meta;
-      card.appendChild(meta);
+      content.appendChild(meta);
     }
-
-    const balance = node.item ? graph.balanceByClass.get(node.item.className) : null;
-    if (node.alternate || node.type === "surplus" || (balance && isPositive(Number(balance.surplus)))) {
-      const badges = document.createElement("div");
-      badges.className = "graph-node-badges";
-      if (node.alternate) badges.appendChild(makeBadge("替代", "alt"));
-      if (node.type === "surplus") badges.appendChild(makeBadge("剩余"));
-      if (node.type !== "surplus" && balance && isPositive(Number(balance.surplus))) {
-        badges.appendChild(makeBadge(`余 ${formatNumber(balance.surplus)}`));
-      }
-      card.appendChild(badges);
-    }
+    if (media) card.appendChild(media);
+    card.appendChild(content);
 
     return card;
   }
@@ -1890,6 +2066,16 @@
       return node.recipeSwitch;
     }
     return null;
+  }
+
+  function recipeColorKeyForRun(run) {
+    return String(
+      run?.outputs?.[0]?.item?.name
+      || run?.recipe?.primaryOutput?.name
+      || run?.recipe?.name
+      || run?.id
+      || "",
+    );
   }
 
   function bindGraphSelectionClear(viewport, graph) {
@@ -2047,8 +2233,33 @@
     }
   }
 
-  function openRecipeFilterDialog() {
+  function recipeFilterFocusFromGraphRecipe(recipe) {
+    const recipeId = String(recipe?.id || "").trim();
+    const firstOutput = (recipe?.currentOutputs || [])[0]?.item || recipe?.primaryOutput;
+    const materialClass = String(firstOutput?.className || "").trim();
+    return recipeId ? { recipeId, materialClass } : null;
+  }
+
+  function normalizeRecipeFilterFocus(target) {
+    const recipeId = String(target?.recipeId || "").trim();
+    if (!recipeId) {
+      return null;
+    }
+    return {
+      recipeId,
+      materialClass: String(target?.materialClass || "").trim(),
+    };
+  }
+
+  function openRecipeFilterDialog(options = {}) {
     closeRecipeFilterDialog();
+    let activeFocusTarget = normalizeRecipeFilterFocus(options.focusTarget);
+    const activeRecipeIdFilter = normalizeRecipeIdSet(options.filterRecipeIds || options.requiredRecipeIds);
+    const hasRecipeIdFilter = activeRecipeIdFilter.size > 0;
+    const noticeText = String(options.notice || "").trim();
+    let activeSelectedOnly = Boolean(options.selectedOnly);
+    const expansionState = new Map();
+    let selectedOnlyReturnState = null;
 
     const overlay = document.createElement("div");
     overlay.className = "recipe-filter-overlay";
@@ -2063,19 +2274,35 @@
     dialog.setAttribute("role", "dialog");
     dialog.setAttribute("aria-modal", "true");
 
+    const dragHandle = document.createElement("div");
+    dragHandle.className = "recipe-filter-drag-handle";
+    dragHandle.title = "Drag recipe filter panel";
+    dragHandle.setAttribute("aria-label", "Drag recipe filter panel");
+    const dragGrip = document.createElement("span");
+    dragGrip.className = "recipe-filter-drag-grip";
+    dragHandle.appendChild(dragGrip);
+    bindRecipeFilterDialogDrag(dialog, dragHandle);
+
     const header = document.createElement("div");
     header.className = "recipe-filter-header";
     const titleWrap = document.createElement("div");
     titleWrap.className = "recipe-filter-title";
     const title = document.createElement("h3");
-    title.textContent = "配方筛选";
+    title.textContent = hasRecipeIdFilter ? "Required Recipes" : "Recipe Filter";
+    titleWrap.appendChild(title);
+    if (noticeText) {
+      const notice = document.createElement("div");
+      notice.className = "recipe-filter-notice";
+      notice.textContent = noticeText;
+      titleWrap.appendChild(notice);
+    }
     const summary = document.createElement("div");
     summary.className = "recipe-filter-summary";
-    titleWrap.append(title, summary);
+    titleWrap.appendChild(summary);
     const closeButton = document.createElement("button");
     closeButton.type = "button";
     closeButton.className = "secondary-button";
-    closeButton.textContent = "关闭";
+    closeButton.textContent = "Close";
     closeButton.addEventListener("click", closeRecipeFilterDialog);
     header.append(titleWrap, closeButton);
 
@@ -2084,20 +2311,24 @@
     const search = document.createElement("input");
     search.className = "recipe-filter-search";
     search.type = "search";
-    search.placeholder = "搜索材料或配方";
+    search.placeholder = hasRecipeIdFilter ? "Search required recipes" : "Search materials or recipes";
     const defaultButton = document.createElement("button");
     defaultButton.type = "button";
     defaultButton.className = "secondary-button";
-    defaultButton.textContent = "恢复基础配方";
+    defaultButton.dataset.recipeFilterAction = "clear-alternates";
+    defaultButton.textContent = "Clear All";
+    const selectedOnlyButton = document.createElement("button");
+    selectedOnlyButton.type = "button";
+    selectedOnlyButton.className = "secondary-button recipe-filter-toggle";
+    selectedOnlyButton.dataset.recipeFilterAction = "selected-only";
+    selectedOnlyButton.textContent = "Selected Only";
+    selectedOnlyButton.setAttribute("aria-pressed", String(activeSelectedOnly));
     const allButton = document.createElement("button");
     allButton.type = "button";
     allButton.className = "secondary-button";
-    allButton.textContent = "全选";
-    const clearButton = document.createElement("button");
-    clearButton.type = "button";
-    clearButton.className = "secondary-button";
-    clearButton.textContent = "清空";
-    tools.append(search, defaultButton, allButton, clearButton);
+    allButton.dataset.recipeFilterAction = "select-all";
+    allButton.textContent = "Select All";
+    tools.append(search, defaultButton, allButton, selectedOnlyButton);
 
     const list = document.createElement("div");
     list.className = "recipe-filter-list";
@@ -2106,55 +2337,270 @@
     footer.className = "recipe-filter-footer";
     const hint = document.createElement("div");
     hint.className = "recipe-filter-summary";
-    hint.textContent = "同一个配方可能出现在多个材料下，任意位置勾选都会同步。";
+    hint.textContent = "The same recipe can appear under multiple materials; checking it in any row updates every copy.";
     const doneButton = document.createElement("button");
     doneButton.type = "button";
     doneButton.className = "primary-button";
-    doneButton.textContent = "完成";
+    doneButton.textContent = "Done";
     doneButton.addEventListener("click", closeRecipeFilterDialog);
     footer.append(hint, doneButton);
 
     defaultButton.addEventListener("click", () => {
-      selectedRecipeIds.clear();
-      recipeCatalog.defaultEnabledRecipeIds.forEach((id) => selectedRecipeIds.add(id));
+      if (isRecipeFilterControlDisabled(defaultButton)) {
+        return;
+      }
+      const defaults = defaultRecipeIdSet();
+      Array.from(selectedRecipeIds).forEach((recipeId) => {
+        if (!defaults.has(recipeId)) {
+          selectedRecipeIds.delete(recipeId);
+        }
+      });
+      ensureDefaultRecipesSelected();
       savePlannerState();
       updateRecipeFilterButton();
-      renderRecipeFilterList(list, search.value, summary);
+      renderCurrentRecipeFilterList();
+      refreshRecipeFilterControls();
+    });
+    selectedOnlyButton.addEventListener("click", () => {
+      if (!activeSelectedOnly) {
+        captureRecipeFilterExpansionState(list, expansionState);
+        selectedOnlyReturnState = {
+          expansionState: new Map(expansionState),
+          scrollTop: list.scrollTop,
+        };
+      }
+      activeSelectedOnly = !activeSelectedOnly;
+      selectedOnlyButton.classList.toggle("active", activeSelectedOnly);
+      selectedOnlyButton.setAttribute("aria-pressed", String(activeSelectedOnly));
+      activeFocusTarget = null;
+      if (activeSelectedOnly) {
+        renderCurrentRecipeFilterList({ preserveExpansion: false });
+        return;
+      }
+      if (selectedOnlyReturnState) {
+        expansionState.clear();
+        selectedOnlyReturnState.expansionState.forEach((open, materialClass) => {
+          expansionState.set(materialClass, open);
+        });
+      }
+      renderCurrentRecipeFilterList({
+        preserveExpansion: false,
+        restoreScrollTop: selectedOnlyReturnState?.scrollTop ?? 0,
+      });
+      selectedOnlyReturnState = null;
     });
     allButton.addEventListener("click", () => {
-      selectedRecipeIds.clear();
+      if (isRecipeFilterControlDisabled(allButton)) {
+        return;
+      }
       recipeCatalog.selectableRecipeIds.forEach((id) => selectedRecipeIds.add(id));
+      ensureDefaultRecipesSelected();
       savePlannerState();
       updateRecipeFilterButton();
-      renderRecipeFilterList(list, search.value, summary);
+      renderCurrentRecipeFilterList();
+      refreshRecipeFilterControls();
     });
-    clearButton.addEventListener("click", () => {
-      selectedRecipeIds.clear();
-      savePlannerState();
-      updateRecipeFilterButton();
-      renderRecipeFilterList(list, search.value, summary);
+    search.addEventListener("input", () => {
+      activeFocusTarget = null;
+      renderCurrentRecipeFilterList({ preserveExpansion: false });
     });
-    search.addEventListener("input", () => renderRecipeFilterList(list, search.value, summary));
 
-    dialog.append(header, tools, list, footer);
+    dialog.append(dragHandle, header, tools, list, footer);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
-    renderRecipeFilterList(list, "", summary);
-    search.focus();
+    selectedOnlyButton.classList.toggle("active", activeSelectedOnly);
+    renderCurrentRecipeFilterList({ preserveExpansion: false });
+    refreshRecipeFilterControls();
+    try {
+      search.focus({ preventScroll: true });
+    } catch (_error) {
+      search.focus();
+    }
+
+    function renderCurrentRecipeFilterList(options = {}) {
+      if (options.preserveExpansion !== false) {
+        captureRecipeFilterExpansionState(list, expansionState);
+      }
+      renderRecipeFilterList(
+        list,
+        search.value,
+        summary,
+        activeFocusTarget,
+        activeRecipeIdFilter,
+        activeSelectedOnly,
+        expansionState,
+      );
+      if (Number.isFinite(options.restoreScrollTop)) {
+        const scrollTop = Math.max(0, Number(options.restoreScrollTop));
+        window.requestAnimationFrame(() => {
+          list.scrollTop = scrollTop;
+        });
+      }
+    }
   }
 
   function closeRecipeFilterDialog() {
+    activeRecipeFilterDrag = null;
     document.querySelector(".recipe-filter-overlay")?.remove();
   }
 
-  function renderRecipeFilterList(list, rawQuery, summary) {
+  function refreshRecipeFilterControls() {
+    const overlay = document.querySelector(".recipe-filter-overlay");
+    if (!overlay) {
+      return;
+    }
+    setRecipeFilterControlDisabled(
+      overlay.querySelector('[data-recipe-filter-action="clear-alternates"]'),
+      selectedAlternateRecipeCount() === 0,
+      "No optional recipes are currently selected.",
+    );
+    setRecipeFilterControlDisabled(
+      overlay.querySelector('[data-recipe-filter-action="select-all"]'),
+      allSelectableRecipesSelected(),
+      "All recipes are already selected.",
+    );
+  }
+
+  function setRecipeFilterControlDisabled(button, disabled, tooltip) {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    button.classList.toggle("is-disabled", Boolean(disabled));
+    button.setAttribute("aria-disabled", disabled ? "true" : "false");
+    button.tabIndex = disabled ? -1 : 0;
+    if (disabled) {
+      button.title = tooltip;
+    } else {
+      button.removeAttribute("title");
+    }
+  }
+
+  function isRecipeFilterControlDisabled(button) {
+    return button?.getAttribute("aria-disabled") === "true";
+  }
+
+  function bindRecipeFilterDialogDrag(dialog, dragHandle) {
+    dragHandle.addEventListener("pointerdown", (event) => startRecipeFilterDialogDrag(event, dialog, dragHandle));
+  }
+
+  function startRecipeFilterDialogDrag(event, dialog, dragHandle) {
+    if (activeRecipeFilterDrag) {
+      return;
+    }
+    if (typeof event.button === "number" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+
+    const rect = dialog.getBoundingClientRect();
+    dialog.classList.add("dragging");
+    dialog.style.position = "fixed";
+    dialog.style.width = `${rect.width}px`;
+    dialog.style.left = `${rect.left}px`;
+    dialog.style.top = `${rect.top}px`;
+    dialog.style.margin = "0";
+
+    activeRecipeFilterDrag = {
+      dialog,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+
+    try {
+      dragHandle.setPointerCapture?.(event.pointerId);
+    } catch (_error) {
+      // Pointer capture can fail if the pointer was already canceled.
+    }
+
+    const handleMove = (moveEvent) => {
+      if (!activeRecipeFilterDrag) {
+        return;
+      }
+      moveEvent.preventDefault();
+      const maxLeft = Math.max(8, window.innerWidth - activeRecipeFilterDrag.width - 8);
+      const maxTop = Math.max(8, window.innerHeight - activeRecipeFilterDrag.height - 8);
+      const nextLeft = activeRecipeFilterDrag.startLeft + moveEvent.clientX - activeRecipeFilterDrag.startClientX;
+      const nextTop = activeRecipeFilterDrag.startTop + moveEvent.clientY - activeRecipeFilterDrag.startClientY;
+      dialog.style.left = `${Math.min(Math.max(8, nextLeft), maxLeft)}px`;
+      dialog.style.top = `${Math.min(Math.max(8, nextTop), maxTop)}px`;
+    };
+
+    const stopDrag = (stopEvent) => {
+      try {
+        dragHandle.releasePointerCapture?.(stopEvent.pointerId);
+      } catch (_error) {
+        // Ignore pointer capture cleanup failures.
+      }
+      window.removeEventListener("pointermove", handleMove, true);
+      window.removeEventListener("pointerup", stopDrag, true);
+      window.removeEventListener("pointercancel", stopDrag, true);
+      dialog.classList.remove("dragging");
+      activeRecipeFilterDrag = null;
+    };
+
+    window.addEventListener("pointermove", handleMove, { capture: true, passive: false });
+    window.addEventListener("pointerup", stopDrag, { capture: true });
+    window.addEventListener("pointercancel", stopDrag, { capture: true });
+  }
+
+  function captureRecipeFilterExpansionState(list, expansionState) {
+    if (!list || !(expansionState instanceof Map)) {
+      return;
+    }
+    list.querySelectorAll(".recipe-material-group").forEach((details) => {
+      const materialClass = String(details.dataset.materialClass || "").trim();
+      if (materialClass) {
+        expansionState.set(materialClass, Boolean(details.open));
+      }
+    });
+  }
+
+  function groupHasSelectedAlternateRecipe(group, recipes = null) {
+    const source = Array.isArray(recipes) ? recipes : group?.recipes;
+    return (source || []).some((recipe) => isSelectedAlternateRecipe(recipe));
+  }
+
+  function isSelectedAlternateRecipe(recipe) {
+    const recipeId = String(recipe?.id || "").trim();
+    return Boolean(recipeId) && selectedRecipeIds.has(recipeId) && !isDefaultRecipeId(recipeId);
+  }
+
+  function recipeFilterGroupOpen(group, recipes, context) {
+    const materialClass = String(group?.item?.className || "").trim();
+    if (context.selectedOnly || context.hasExactRecipeFilter || Boolean(context.query)) {
+      return true;
+    }
+    if (context.normalizedFocusTarget?.materialClass && materialClass === context.normalizedFocusTarget.materialClass) {
+      return true;
+    }
+    if (context.expansionState instanceof Map && context.expansionState.has(materialClass)) {
+      return Boolean(context.expansionState.get(materialClass));
+    }
+    return groupHasSelectedAlternateRecipe(group, recipes);
+  }
+
+  function renderRecipeFilterList(list, rawQuery, summary, focusTarget = null, recipeIdFilter = null, selectedOnly = false, expansionState = null) {
+    ensureDefaultRecipesSelected();
     const query = normalize(rawQuery);
+    const normalizedFocusTarget = normalizeRecipeFilterFocus(focusTarget);
+    const exactRecipeIds = recipeIdFilter instanceof Set ? recipeIdFilter : normalizeRecipeIdSet(recipeIdFilter);
+    const hasExactRecipeFilter = exactRecipeIds.size > 0;
     list.replaceChildren();
     let visibleMaterialCount = 0;
     let visibleRecipeCount = 0;
+    let focusedRow = null;
+    let fallbackFocusedRow = null;
 
     recipeCatalog.materials.forEach((group) => {
-      const recipes = (group.recipes || []).filter((recipe) => recipeMatchesQuery(group, recipe, query));
+      const recipes = (group.recipes || []).filter((recipe) => (
+        (!hasExactRecipeFilter || exactRecipeIds.has(recipe.id))
+        && (!selectedOnly || isSelectedAlternateRecipe(recipe))
+        && recipeMatchesQuery(group, recipe, query)
+      ));
       if (!recipes.length) {
         return;
       }
@@ -2163,13 +2609,24 @@
 
       const details = document.createElement("details");
       details.className = "recipe-material-group";
-      details.open = Boolean(query);
+      const groupMaterialClass = String(group.item?.className || "").trim();
+      details.dataset.materialClass = groupMaterialClass;
+      details.open = recipeFilterGroupOpen(group, recipes, {
+        expansionState,
+        hasExactRecipeFilter,
+        normalizedFocusTarget,
+        query,
+        selectedOnly,
+      });
 
       const groupSummary = document.createElement("summary");
       groupSummary.className = "recipe-material-summary";
       const name = document.createElement("span");
       name.className = "recipe-material-name";
-      name.textContent = group.item?.name || group.item?.className || "Unknown";
+      name.append(
+        makeMaterialIcon(group.item, "recipe-material-icon"),
+        document.createTextNode(group.item?.name || group.item?.className || "Unknown"),
+      );
       const meta = document.createElement("span");
       meta.className = "recipe-material-meta";
       meta.textContent = `${formatInteger(recipes.length)} recipe(s) · ${group.materialCategory || ""}`;
@@ -2177,36 +2634,82 @@
       details.appendChild(groupSummary);
 
       recipes.forEach((recipe) => {
-        details.appendChild(renderRecipeFilterRow(recipe));
+        const row = renderRecipeFilterRow(recipe, group, {
+          required: hasExactRecipeFilter && exactRecipeIds.has(recipe.id),
+          onSelectionChange: () => {
+            captureRecipeFilterExpansionState(list, expansionState);
+            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, selectedOnly, expansionState);
+          },
+        });
+        if (normalizedFocusTarget?.recipeId && recipe.id === normalizedFocusTarget.recipeId) {
+          if (normalizedFocusTarget.materialClass && groupMaterialClass === normalizedFocusTarget.materialClass) {
+            focusedRow = row;
+          } else if (!fallbackFocusedRow) {
+            fallbackFocusedRow = row;
+          }
+        }
+        details.appendChild(row);
       });
       list.appendChild(details);
     });
 
+    const rowToFocus = focusedRow || fallbackFocusedRow;
+    if (rowToFocus) {
+      rowToFocus.classList.add("focused");
+      const group = rowToFocus.closest(".recipe-material-group");
+      if (group) {
+        group.open = true;
+      }
+      window.requestAnimationFrame(() => {
+        rowToFocus.scrollIntoView({ block: "center", inline: "nearest" });
+      });
+    }
+
     if (!visibleMaterialCount) {
-      list.replaceChildren(makeEmptyMessage("没有匹配的配方。"));
+      list.replaceChildren(makeEmptyMessage("No matching recipes."));
     }
     if (summary) {
-      summary.textContent = `${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected · ${formatInteger(visibleMaterialCount)} material(s), ${formatInteger(visibleRecipeCount)} visible recipe row(s)`;
+      summary.textContent = hasExactRecipeFilter
+        ? `${formatInteger(visibleRecipeCount)} row(s) for ${formatInteger(exactRecipeIds.size)} required recipe(s) · ${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected`
+        : `${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected · ${formatInteger(visibleMaterialCount)} material(s), ${formatInteger(visibleRecipeCount)} ${selectedOnly ? "selected " : ""}visible recipe row(s)`;
     }
   }
 
-  function renderRecipeFilterRow(recipe) {
+  function renderRecipeFilterRow(recipe, group, options = {}) {
     const row = document.createElement("label");
     row.className = "recipe-row";
+    const isDefaultRecipe = isDefaultRecipeId(recipe.id);
+    if (options.required) {
+      row.classList.add("required");
+    }
+    if (isDefaultRecipe) {
+      row.classList.add("base-locked");
+      row.title = "Base recipes are always enabled.";
+    }
+    row.dataset.recipeId = recipe.id || "";
+    row.dataset.materialClass = group?.item?.className || "";
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.className = "recipe-filter-checkbox";
     checkbox.dataset.recipeId = recipe.id;
-    checkbox.checked = selectedRecipeIds.has(recipe.id);
+    checkbox.checked = isDefaultRecipe || selectedRecipeIds.has(recipe.id);
+    checkbox.disabled = isDefaultRecipe;
+    if (isDefaultRecipe) {
+      checkbox.title = "Base recipes are always enabled.";
+    }
     checkbox.addEventListener("change", () => {
       setRecipeSelected(recipe.id, checkbox.checked);
+      options.onSelectionChange?.();
     });
 
     const body = document.createElement("div");
     const name = document.createElement("div");
     name.className = "recipe-row-name";
-    name.textContent = recipe.name || recipe.id;
+    const recipeTag = document.createElement("span");
+    recipeTag.className = "recipe-row-tag";
+    recipeTag.textContent = "[Recipe]";
+    name.append(recipeTag, document.createTextNode(recipe.name || recipe.id));
     const meta = document.createElement("div");
     meta.className = "recipe-row-meta";
     meta.textContent = [
@@ -2216,7 +2719,7 @@
     ].filter(Boolean).join(" · ");
     const formula = document.createElement("div");
     formula.className = "recipe-row-formula";
-    formula.textContent = recipeFormula(recipe);
+    formula.append(renderRecipeSide(recipe.inputs), document.createTextNode(" = "), renderRecipeSide(recipe.outputs));
     body.append(name, meta, formula);
     row.append(checkbox, body);
     return row;
@@ -2226,17 +2729,28 @@
     if (!recipeId) {
       return;
     }
+    if (!selected && isDefaultRecipeId(recipeId)) {
+      selectedRecipeIds.add(recipeId);
+      document.querySelectorAll(".recipe-filter-checkbox").forEach((checkbox) => {
+        if (checkbox.dataset.recipeId === recipeId) {
+          checkbox.checked = true;
+        }
+      });
+      return;
+    }
     if (selected) {
       selectedRecipeIds.add(recipeId);
     } else {
       selectedRecipeIds.delete(recipeId);
     }
+    ensureDefaultRecipesSelected();
     document.querySelectorAll(".recipe-filter-checkbox").forEach((checkbox) => {
       if (checkbox.dataset.recipeId === recipeId) {
         checkbox.checked = selectedRecipeIds.has(recipeId);
       }
     });
     updateRecipeFilterButton();
+    refreshRecipeFilterControls();
     savePlannerState();
   }
 
@@ -2256,6 +2770,28 @@
 
   function recipeFormula(recipe) {
     return `${recipeSide(recipe.inputs)} = ${recipeSide(recipe.outputs)}`;
+  }
+
+  function renderRecipeSide(entries) {
+    const side = document.createElement("span");
+    side.className = "recipe-formula-side";
+    if (!Array.isArray(entries) || !entries.length) {
+      side.textContent = "None";
+      return side;
+    }
+    entries.forEach((entry, index) => {
+      if (index > 0) {
+        side.appendChild(document.createTextNode(" + "));
+      }
+      const token = document.createElement("span");
+      token.className = "recipe-formula-item";
+      token.append(
+        makeMaterialIcon(entry.item, "recipe-formula-icon"),
+        document.createTextNode(`${entry.item?.name || ""} (${formatNumber(entry.rate)})`),
+      );
+      side.appendChild(token);
+    });
+    return side;
   }
 
   function recipeSide(entries) {
@@ -2344,7 +2880,7 @@
 
   function recipeOptionFormula(option) {
     if (option?.isDirectRaw) {
-      return "直接作为外部输入";
+      return "Use directly as external input";
     }
     return `${recipeOptionSide(option.inputs)} = ${recipeOptionSide(option.outputs)}`;
   }
@@ -2661,10 +3197,10 @@
   }
 
   function graphNodeKindText(node) {
-    if (node.type === "raw") return materialCategoryText(node.item, "原始材料");
-    if (node.type === "target") return "输出";
-    if (node.type === "surplus") return "剩余";
-    return "配方";
+    if (node.type === "raw") return materialCategoryText(node.item, "Raw material");
+    if (node.type === "target") return "Output";
+    if (node.type === "surplus") return "Surplus";
+    return "Recipe";
   }
 
   function graphNodeSortKey(node, balanceByClass) {
@@ -2756,7 +3292,7 @@
 
   function renderMergedTable(totals) {
     if (!totals.length) {
-      tableView.replaceChildren(makeEmptyMessage("所选目标没有下游材料需求。"));
+      tableView.replaceChildren(makeEmptyMessage("The selected targets have no downstream material requirements."));
       return;
     }
 
@@ -2767,7 +3303,7 @@
     table.className = "merged-table";
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    ["物品", "需求 / 分钟", "单位", "类型", "使用配方"].forEach((label) => {
+    ["Item", "Required / min", "Unit", "Type", "Recipes Used"].forEach((label) => {
       const th = document.createElement("th");
       th.textContent = label;
       headRow.appendChild(th);
@@ -2780,7 +3316,7 @@
       appendCell(tr, row.item.name);
       appendCell(tr, formatNumber(row.rate), "number-cell");
       appendCell(tr, row.item.unit);
-      appendCell(tr, row.raw ? materialCategoryText(row.item, "原始材料") : "中间材料");
+      appendCell(tr, row.raw ? materialCategoryText(row.item, "Raw material") : "Intermediate material");
       appendRecipeUsageCell(tr, row);
       tbody.appendChild(tr);
     });
@@ -2797,7 +3333,7 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = "table-switch-recipe-button";
-      button.textContent = "换配方";
+      button.textContent = "Change Recipe";
       button.setAttribute("aria-label", `Switch recipe for ${switchRecipe.primaryOutput?.name || row.item?.name || ""}`);
       button.addEventListener("click", () => openRecipeSwitchDialog(switchRecipe));
       cell.appendChild(button);
@@ -2814,11 +3350,11 @@
 
   function summaryText(summary) {
     const parts = [
-      `${formatInteger(summary.recipeCount)} 条配方`,
-      `${formatInteger(summary.itemCount)} 个物品`,
+      `${formatInteger(summary.recipeCount)} recipes`,
+      `${formatInteger(summary.itemCount)} items`,
     ];
     if (summary.generatedAt) {
-      parts.push(`Excel 生成于 ${formatTimestamp(summary.generatedAt)}`);
+      parts.push(`Excel generated ${formatTimestamp(summary.generatedAt)}`);
     }
     return parts.join(" · ");
   }
@@ -2828,14 +3364,7 @@
     if (Number.isNaN(date.getTime())) {
       return value;
     }
-    return date.toLocaleString("zh-CN", { hour12: false });
-  }
-
-  function makeBadge(text, extraClass = "") {
-    const badge = document.createElement("span");
-    badge.className = `badge${extraClass ? ` ${extraClass}` : ""}`;
-    badge.textContent = text;
-    return badge;
+    return date.toLocaleString("en-US", { hour12: false });
   }
 
   function appendCell(row, text, className = "") {

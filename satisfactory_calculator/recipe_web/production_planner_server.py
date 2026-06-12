@@ -22,7 +22,7 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/summary":
             self._send_json(self.planner.summary())
             return
-        if path == "/api/items":
+        if path in {"/api/items", "/api/materials"}:
             self._send_json({"items": self.planner.list_items()})
             return
         if path == "/api/recipes":

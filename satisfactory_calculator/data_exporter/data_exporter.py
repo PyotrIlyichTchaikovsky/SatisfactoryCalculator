@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 import game_rawdata_exporter
+import copy_device_icons
 import raw_to_data
 
 
@@ -21,7 +22,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if raw_result:
         return raw_result
 
-    return raw_to_data.main(["--config", str(args.data_config)])
+    data_result = raw_to_data.main(["--config", str(args.data_config)])
+    if data_result:
+        return data_result
+
+    return copy_device_icons.main(["--config", str(args.data_config)])
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
