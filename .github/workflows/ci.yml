@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: satisfactory_calculator/requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r satisfactory_calculator/requirements.txt
+
+      - name: Check Python syntax
+        run: >
+          python -m py_compile
+          satisfactory_calculator/recipe_web/production_planner_core.py
+          satisfactory_calculator/recipe_web/production_planner_server.py
+          satisfactory_calculator/recipe_web/production_planner_app.py
+
+      - name: Run Python tests
+        run: python -m unittest discover -s satisfactory_calculator/tests -v
+
+      - name: Check frontend syntax
+        run: node --check satisfactory_calculator/recipe_web/production_planner.js

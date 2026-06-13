@@ -1,0 +1,27 @@
+[Unit]
+Description=Satisfactory Production Planner API
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/satisfactory-calculator/satisfactory_calculator/recipe_web
+Environment=PLANNER_MAX_BODY_BYTES=65536
+Environment=PLANNER_MAX_CONCURRENT_PLANS=2
+Environment=PLANNER_PLAN_TIMEOUT_SECONDS=15
+Environment=PLANNER_PLAN_QUEUE_TIMEOUT_SECONDS=0.25
+Environment=PLANNER_PLAN_CACHE_TTL_SECONDS=900
+Environment=PLANNER_PLAN_CACHE_MAX_ENTRIES=256
+Environment=PLANNER_LOG_LEVEL=INFO
+ExecStart=/opt/satisfactory-calculator/.venv/bin/python -m uvicorn production_planner_app:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

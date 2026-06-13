@@ -1,0 +1,38 @@
+# Replace the domain and paths before using this in production.
+#
+# Expected process layout:
+# - Caddy terminates HTTPS and serves static files.
+# - Uvicorn listens on 127.0.0.1:8000 and handles /api/* only.
+
+your-domain.example {
+	encode zstd gzip
+
+	root * /opt/satisfactory-calculator/satisfactory_calculator/recipe_web
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
+
+	@api path /api/*
+	reverse_proxy @api 127.0.0.1:8000
+
+	# Optional: restrict /api/metrics to trusted IPs before public launch.
+	# @metrics path /api/metrics
+	# respond @metrics 404
+
+	@blocked {
+		path_regexp sensitive (?i)(^|/)(__pycache__)(/|$)|\.(py|pyc|xlsx)$
+	}
+	respond @blocked 404
+
+	header /production_planner.html Cache-Control "no-cache, max-age=0"
+	header /production_planner.css Cache-Control "public, max-age=604800"
+	header /production_planner.js Cache-Control "public, max-age=604800"
+	header /data/icons/* Cache-Control "public, max-age=2592000"
+
+	try_files {path} /production_planner.html
+	file_server
+}

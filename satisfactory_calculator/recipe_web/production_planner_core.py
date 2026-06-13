@@ -4,6 +4,7 @@ import re
 import sys
 import warnings
 import zipfile
+import math
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -44,6 +45,10 @@ _RECIPE_FLAG_UNPACKAGE = "Unpackage"
 _RECIPE_FLAG_RAW_MATERIAL = "RawMaterial"
 _RECIPE_FLAG_POWER = "PowerRecipe"
 _MILP_STRICT_OPTIONS = {"mip_feasibility_tolerance": 1e-9}
+MAX_TARGETS = 12
+MAX_TARGET_RATE = 1_000_000.0
+MAX_ENABLED_RECIPE_IDS = 1_000
+MAX_RECIPE_ID_LENGTH = 160
 
 
 class PlannerError(ValueError):
@@ -257,8 +262,6 @@ class ProductionPlanner:
             "rawMaterialCount": len(self.raw_source_classes),
             "pickupMaterialCount": len(self.pickup_source_classes),
             "powerGroupCount": len(self.power_groups),
-            "excelPath": str(self.excel_path),
-            "sourceDocsJson": self.version_info.get("SourceDocsJson", ""),
             "generatedAt": self.version_info.get("GeneratedAt", ""),
         }
 
@@ -534,10 +537,12 @@ class ProductionPlanner:
             return set(self.default_enabled_recipe_ids)
         if not isinstance(enabled_recipe_ids, list):
             raise PlannerError("enabledRecipeIds must be an array of recipe IDs.")
+        if len(enabled_recipe_ids) > MAX_ENABLED_RECIPE_IDS:
+            raise PlannerError(f"enabledRecipeIds must include at most {MAX_ENABLED_RECIPE_IDS} recipe IDs.")
         return {
             recipe_id
             for recipe_id in (str(value or "").strip() for value in enabled_recipe_ids)
-            if recipe_id in self.selectable_recipe_ids
+            if 0 < len(recipe_id) <= MAX_RECIPE_ID_LENGTH and recipe_id in self.selectable_recipe_ids
         }
 
     def _parse_recipe_mode(self, recipe_mode: Any | None) -> str:
@@ -746,6 +751,10 @@ class ProductionPlanner:
         return effective_selections
 
     def _parse_targets(self, targets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not isinstance(targets, list):
+            raise PlannerError("targets must be an array.")
+        if len(targets) > MAX_TARGETS:
+            raise PlannerError(f"At most {MAX_TARGETS} production targets are allowed.")
         parsed: list[dict[str, Any]] = []
         for index, target in enumerate(targets, start=1):
             if not isinstance(target, dict):
@@ -756,8 +765,12 @@ class ProductionPlanner:
                 rate = float(target.get("rate"))
             except (TypeError, ValueError) as exc:
                 raise PlannerError(f"Target #{index} has an invalid rate.") from exc
+            if not _is_finite_number(rate):
+                raise PlannerError(f"Target #{index} rate must be a finite number.")
             if rate <= 0:
                 raise PlannerError(f"Target #{index} rate must be greater than 0.")
+            if rate > MAX_TARGET_RATE:
+                raise PlannerError(f"Target #{index} rate must be at most {_clean_number(MAX_TARGET_RATE)} per minute.")
             parsed.append({"item": item, "rate": rate, "powerGroup": power_group})
         if not parsed:
             raise PlannerError("At least one production target is required.")
@@ -805,6 +818,8 @@ class ProductionPlanner:
 
         recipe_count = len(candidate_recipes)
         variable_count = recipe_count + len(raw_classes)
+        if variable_count <= 0:
+            raise PlannerError("No active recipes or external sources are available for the requested target.")
         net_matrix = [[0.0 for _ in range(variable_count)] for _ in material_classes]
         demand = [0.0 for _ in material_classes]
 
@@ -2157,6 +2172,10 @@ def _float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _is_finite_number(value: float) -> bool:
+    return math.isfinite(value)
 
 
 def _bool(value: Any) -> bool:

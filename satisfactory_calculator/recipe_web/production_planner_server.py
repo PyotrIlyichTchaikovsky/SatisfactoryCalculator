@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import mimetypes
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +14,8 @@ from production_planner_core import DEFAULT_EXCEL_PATH, PlannerError, Production
 
 
 STATIC_DIR = Path(__file__).resolve().parent
+MAX_REQUEST_BODY_BYTES = 64 * 1024
+logger = logging.getLogger("production_planner.dev_server")
 
 
 class PlannerRequestHandler(SimpleHTTPRequestHandler):
@@ -19,6 +23,13 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/health":
+            self._send_json({
+                "ok": True,
+                "recipeCount": len(self.planner.recipes),
+                "itemCount": len(self.planner.items),
+            })
+            return
         if path == "/api/summary":
             self._send_json(self.planner.summary())
             return
@@ -30,6 +41,9 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
             return
         if path == "/":
             self.path = "/production_planner.html"
+        if self._is_blocked_static_path(path):
+            self.send_error(404)
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -50,14 +64,20 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._send_json({"error": f"Invalid JSON request body: {exc}"}, status=400)
             return
-        except Exception as exc:  # pragma: no cover - keep the HTTP server alive on unexpected failures.
-            self._send_json({"error": f"Server error: {exc}"}, status=500)
+        except Exception:  # pragma: no cover - keep the HTTP server alive on unexpected failures.
+            logger.exception("Unexpected planner server error")
+            self._send_json({"error": "Server error. Please try again later."}, status=500)
             return
 
         self._send_json(result)
 
     def _read_json_body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError as exc:
+            raise PlannerError("Invalid Content-Length header.") from exc
+        if length > MAX_REQUEST_BODY_BYTES:
+            raise PlannerError("Request body is too large.")
         raw = self.rfile.read(length)
         payload = json.loads(raw.decode("utf-8")) if raw else {}
         if not isinstance(payload, dict):
@@ -73,10 +93,36 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def end_headers(self) -> None:
-        self.send_header("Cache-Control", "no-store, max-age=0")
-        self.send_header("Pragma", "no-cache")
-        self.send_header("Expires", "0")
+        path = urlparse(self.path).path
+        if path.startswith("/api/") or path.endswith(".html"):
+            self.send_header("Cache-Control", "no-store, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        elif path.endswith((".css", ".js")):
+            self.send_header("Cache-Control", "public, max-age=604800")
+        elif path.startswith("/data/icons/"):
+            self.send_header("Cache-Control", "public, max-age=2592000")
+        else:
+            self.send_header("Cache-Control", "public, max-age=3600")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("X-Frame-Options", "DENY")
         super().end_headers()
+
+    def guess_type(self, path: str) -> str:
+        return mimetypes.guess_type(path)[0] or super().guess_type(path)
+
+    @staticmethod
+    def _is_blocked_static_path(path: str) -> bool:
+        return (
+            (path.endswith("/") and path != "/")
+            or (path.startswith("/data/") and not path.startswith("/data/icons/"))
+            or path.startswith("/__pycache__")
+            or path.endswith(".py")
+            or path.endswith(".xlsx")
+            or "/__pycache__/" in path
+            or path.endswith(".pyc")
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +139,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = parse_args()
     planner = ProductionPlanner.from_excel(args.excel)
     PlannerRequestHandler.planner = planner
