@@ -488,9 +488,8 @@ h2 {
 .graph-edge-label {
   position: absolute;
   z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: inline-grid;
+  gap: 3px;
   transform: translate(-50%, -50%);
   padding: 2px 5px;
   border-radius: 5px;
@@ -499,7 +498,7 @@ h2 {
   font-size: 13px;
   font-weight: 700;
   line-height: 1.15;
-  max-width: 190px;
+  max-width: 230px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -514,22 +513,71 @@ h2 {
 
 .graph-edge-label.highlight-edge {
   z-index: 42;
+  max-width: min(360px, 42vw);
   background: rgba(250, 204, 21, 0.94);
   color: #1f2933;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 8px 18px rgba(0, 0, 0, 0.26);
   text-shadow: none;
 }
 
-.graph-edge-label-name {
-  flex: 1 1 auto;
+.graph-edge-label-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.graph-edge-label-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.42));
+}
+
+.graph-edge-label-icon.empty {
+  width: 14px;
+  height: 14px;
+  border: 1px dashed rgba(229, 231, 235, 0.72);
+  border-radius: 3px;
+  filter: none;
+}
+
+.graph-edge-label.highlight-edge .graph-edge-label-icon {
+  width: 20px;
+  height: 20px;
+  filter: none;
+}
+
+.graph-edge-label-name {
+  display: none;
 }
 
 .graph-edge-label-rate {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
+}
+
+.graph-edge-label-scale {
+  flex: 0 0 auto;
+  color: rgba(229, 231, 235, 0.78);
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-edge-label.highlight-edge .graph-edge-label-scale {
+  color: rgba(31, 41, 51, 0.78);
+}
+
+.graph-edge-label.highlight-edge .graph-edge-label-name {
+  display: block;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .graph-node {
@@ -682,6 +730,44 @@ h2 {
 .switch-recipe-button:hover {
   border-color: #ffffff;
   background: rgba(15, 118, 110, 0.96);
+}
+
+.graph-check-control {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  z-index: 3;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(8, 13, 18, 0.12);
+  opacity: 0.72;
+  cursor: pointer;
+}
+
+.graph-check-input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #22c55e;
+  cursor: pointer;
+}
+
+.graph-check-input:not(:checked) {
+  opacity: 0.56;
+}
+
+.graph-check-control:hover,
+.graph-check-control:focus-within {
+  background: rgba(8, 13, 18, 0.34);
+  opacity: 1;
+}
+
+.graph-check-control:has(.graph-check-input:checked) {
+  background: rgba(8, 13, 18, 0.28);
+  opacity: 1;
 }
 
 .recipe-filter-overlay {

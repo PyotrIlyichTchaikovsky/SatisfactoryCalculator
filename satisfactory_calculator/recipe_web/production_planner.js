@@ -94,6 +94,7 @@
   }
 
   async function calculate(options = {}) {
+    clearRecipeCardChecks();
     const targets = collectTargets();
     if (!targets.length) {
       return;
@@ -1176,6 +1177,7 @@
         item: raw.item,
         rate,
         remaining: rate,
+        sourceScale: rate,
       });
     });
 
@@ -1186,7 +1188,7 @@
         type: "recipe",
         column: recipeColumns.get(run.id) || 1,
         title: run.recipe.name,
-        meta: `x ${formatNumber(run.scale)}`,
+        meta: `x ${formatMultiplier(run.scale)}`,
         alternate: Boolean(run.recipe.isAlternate),
         recipe: {
           ...run.recipe,
@@ -1207,6 +1209,7 @@
           item: output.item,
           rate,
           remaining: rate,
+          sourceScale: Number(run.scale || 0),
           byproduct: output.role === "byproduct",
         });
       });
@@ -1391,12 +1394,15 @@
         const rate = Math.min(producer.remaining, consumer.remaining);
 
         if (isPositive(rate) && producer.nodeId !== consumer.nodeId) {
+          const sourceNode = nodes.get(producer.nodeId);
           edges.push({
             id: `edge:${edges.length}`,
             source: producer.nodeId,
             target: consumer.nodeId,
             item: producer.item || consumer.item,
             rate,
+            scale: graphEdgeAllocatedScale(producer, rate),
+            showScale: graphEdgeShowsScale(sourceNode),
             byproduct: Boolean(producer.byproduct),
             color: materialColor(itemClass),
           });
@@ -1407,6 +1413,20 @@
       }
     });
     return edges;
+  }
+
+  function graphEdgeAllocatedScale(producer, rate) {
+    const sourceScale = Number(producer.sourceScale);
+    const sourceRate = Number(producer.rate);
+    const edgeRate = Number(rate);
+    if (!isPositive(sourceScale) || !isPositive(sourceRate) || !isPositive(edgeRate)) {
+      return 0;
+    }
+    return sourceScale * (edgeRate / sourceRate);
+  }
+
+  function graphEdgeShowsScale(sourceNode) {
+    return sourceNode?.type !== "raw";
   }
 
   function bestGraphEdgeAllocationCandidate(producers, consumers, nodes, dependencyInfo) {
@@ -1955,6 +1975,9 @@
     if (hasSwitchButton) {
       card.classList.add("has-switch-button");
     }
+    if (graphNodeHasCheck(node)) {
+      card.classList.add("has-graph-check");
+    }
     card.style.left = `${node.x}px`;
     card.style.top = `${node.y}px`;
     card.style.width = `${node.width}px`;
@@ -1987,6 +2010,21 @@
         }
       });
       card.appendChild(switchButton);
+    }
+
+    if (graphNodeHasCheck(node)) {
+      const checkLabel = document.createElement("label");
+      checkLabel.className = "graph-check-control";
+      checkLabel.title = `Mark this ${graphNodeCheckLabel(node)} as checked`;
+      checkLabel.addEventListener("click", (event) => event.stopPropagation());
+      checkLabel.addEventListener("pointerdown", (event) => event.stopPropagation());
+
+      const checkInput = document.createElement("input");
+      checkInput.type = "checkbox";
+      checkInput.className = "graph-check-input";
+      checkInput.setAttribute("aria-label", `Mark ${node.title || graphNodeCheckLabel(node)} as checked`);
+      checkLabel.appendChild(checkInput);
+      card.appendChild(checkLabel);
     }
 
     let media = null;
@@ -2056,6 +2094,20 @@
     card.appendChild(content);
 
     return card;
+  }
+
+  function clearRecipeCardChecks() {
+    document.querySelectorAll(".graph-check-input").forEach((checkbox) => {
+      checkbox.checked = false;
+    });
+  }
+
+  function graphNodeHasCheck(node) {
+    return node.type === "recipe" || node.type === "raw";
+  }
+
+  function graphNodeCheckLabel(node) {
+    return node.type === "raw" ? "raw material" : "recipe";
   }
 
   function graphNodeSwitchRecipe(node) {
@@ -3133,15 +3185,42 @@
     label.className = "graph-edge-label";
     label.style.left = `${edge.labelX}px`;
     label.style.top = `${edge.labelY}px`;
+
+    const summary = document.createElement("div");
+    summary.className = "graph-edge-label-summary";
+
+    const icon = makeMaterialIcon(edge.item, "graph-edge-label-icon");
     const name = document.createElement("span");
     name.className = "graph-edge-label-name";
     name.textContent = edge.item.name;
     const rate = document.createElement("span");
     rate.className = "graph-edge-label-rate";
     rate.textContent = `${formatNumber(edge.rate)}/min`;
-    label.append(name, rate);
-    label.title = `${edge.item.name}: ${formatNumber(edge.rate)} ${edge.item.unit}/min`;
+    summary.append(icon, rate);
+
+    const edgeScale = graphEdgeDisplayScale(edge);
+    if (isPositive(edgeScale)) {
+      const scale = document.createElement("span");
+      scale.className = "graph-edge-label-scale";
+      scale.textContent = `[x${formatMultiplier(edgeScale)}]`;
+      summary.appendChild(scale);
+    }
+    label.append(summary, name);
+    label.title = edgeLabelTitle(edge);
     return label;
+  }
+
+  function edgeLabelTitle(edge) {
+    const parts = [`${edge.item.name}: ${formatNumber(edge.rate)} ${edge.item.unit}/min`];
+    const edgeScale = graphEdgeDisplayScale(edge);
+    if (isPositive(edgeScale)) {
+      parts.push(`allocated multiplier [x${formatMultiplier(edgeScale)}]`);
+    }
+    return parts.join(" · ");
+  }
+
+  function graphEdgeDisplayScale(edge) {
+    return edge.showScale === false ? 0 : Number(edge.scale || 0);
   }
 
   function positionEdgeLabel(edge) {
@@ -3424,6 +3503,47 @@
       return String(Math.round(number));
     }
     return number.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  function formatMultiplier(value) {
+    return formatCompactDecimal(value, {
+      maxNormalFractionDigits: 3,
+      significantFractionDigits: 3,
+      maxFractionDigits: 9,
+    });
+  }
+
+  function formatCompactDecimal(value, options = {}) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "";
+    }
+    if (number === 0) {
+      return "0";
+    }
+    const absolute = Math.abs(number);
+    const nearestInteger = Math.round(number);
+    if (nearestInteger !== 0 && Math.abs(number - nearestInteger) <= Math.max(1e-9, absolute * 1e-9)) {
+      return String(nearestInteger);
+    }
+
+    const maxNormalFractionDigits = Number(options.maxNormalFractionDigits ?? 3);
+    const significantFractionDigits = Number(options.significantFractionDigits ?? 3);
+    const maxFractionDigits = Number(options.maxFractionDigits ?? 9);
+    const fractionDigits = absolute >= 1
+      ? maxNormalFractionDigits
+      : Math.min(
+        maxFractionDigits,
+        Math.max(
+          maxNormalFractionDigits,
+          Math.ceil(-Math.log10(absolute)) + significantFractionDigits - 1,
+        ),
+      );
+    const rounded = number.toFixed(fractionDigits).replace(/0+$/, "").replace(/\.$/, "");
+    if (rounded !== "0" && rounded !== "-0") {
+      return rounded;
+    }
+    return number.toExponential(Math.max(0, significantFractionDigits - 1)).replace(/\.?0+e/, "e");
   }
 
   function formatInteger(value) {
