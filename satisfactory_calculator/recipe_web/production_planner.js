@@ -4,6 +4,9 @@
   const targetRows = document.getElementById("targetRows");
   const targetTemplate = document.getElementById("targetRowTemplate");
   const addTargetButton = document.getElementById("addTargetButton");
+  const savePlanButton = document.getElementById("savePlanButton");
+  const savedPlanSelect = document.getElementById("savedPlanSelect");
+  const historyPlanSelect = document.getElementById("historyPlanSelect");
   const recipeFilterButton = document.getElementById("recipeFilterButton");
   const plannerForm = document.getElementById("plannerForm");
   const dataSummary = document.getElementById("dataSummary");
@@ -21,6 +24,7 @@
   const RECIPE_MODE_BASE = "base";
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
   const DIRECT_RAW_RECIPE_ID = "__raw__";
+  const TARGET_HISTORY_LIMIT = 10;
   const recipeModeInputs = [];
 
   let items = [];
@@ -31,6 +35,8 @@
   const recipeNodePositions = new Map();
   let activeTab = "tree";
   let savedState = loadPlannerState();
+  let savedTargetPlans = normalizeTargetPlanList(savedState.savedTargetPlans);
+  let targetHistory = normalizeTargetPlanList(savedState.targetHistory).slice(0, TARGET_HISTORY_LIMIT);
   let pendingRecipeMode = RECIPE_MODE_BASE;
   let suppressStateSave = false;
   let activePlanKey = "";
@@ -46,6 +52,9 @@
   let lastServerPlanSignature = "";
 
   addTargetButton.addEventListener("click", () => addTargetRow());
+  savePlanButton?.addEventListener("click", saveCurrentTargetPlan);
+  savedPlanSelect?.addEventListener("click", (event) => handleTargetPlanPickerClick(event, savedPlanSelect, savedTargetPlans));
+  historyPlanSelect?.addEventListener("click", (event) => handleTargetPlanPickerClick(event, historyPlanSelect, targetHistory));
   recipeFilterButton?.addEventListener("click", openRecipeFilterDialog);
   plannerForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -55,6 +64,11 @@
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element) || !event.target.closest(".plan-picker")) {
+      closeTargetPlanPickers();
+    }
+  });
   window.addEventListener("resize", handleWindowResize);
 
   try {
@@ -81,6 +95,7 @@
       if (!restoreTargetRows(savedState.targets)) {
         addTargetRow(null, "", { focus: false, save: false });
       }
+      renderTargetPlanSelectors();
       activatePlanCacheForCurrentTargets();
       dataSummary.textContent = summaryText(summary);
       setStatus("Loaded Excel recipe data from server. Select items and enter rates per minute.", false);
@@ -88,6 +103,7 @@
       if (!targetRows.querySelector(".target-row")) {
         addTargetRow(null, "", { focus: false, save: false });
       }
+      renderTargetPlanSelectors();
       dataSummary.textContent = "Unable to connect to the production planner service";
       setStatus(`Failed to load server data: ${error.message}. Start recipe_web/production_planner_server.py and reload.`, true);
     }
@@ -100,6 +116,7 @@
       return;
     }
     activatePlanCacheForCurrentTargets();
+    addTargetPlanToHistory(targetSnapshotsFromTargets(targets));
     savePlannerState();
 
     setStatus("Requesting calculation from the server...", false);
@@ -113,6 +130,7 @@
             rate: target.rate,
           })),
           enabledRecipeIds: selectedRecipeIdsPayload(),
+          preferredPlan: options.usePreferredPlan ? preferredPlanPayload() : [],
         }),
       });
       if (result.recipeExpansionRequired) {
@@ -253,6 +271,8 @@
       selectionCacheVersion: SELECTION_CACHE_VERSION,
       targets: collectTargetState(),
       enabledRecipeIds: selectedRecipeIdsPayload(),
+      savedTargetPlans,
+      targetHistory,
       recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
         id,
         x: roundGraphCoordinate(position.x),
@@ -279,6 +299,219 @@
         };
       })
       .filter((target) => target.itemClass || target.itemName || target.rate);
+  }
+
+  function normalizeTargetPlanList(entries) {
+    const result = [];
+    if (!Array.isArray(entries)) {
+      return result;
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      const targets = normalizeTargetSnapshots(entry?.targets || entry);
+      if (!targets.length) {
+        continue;
+      }
+      addTargetPlanToList(result, targets);
+    }
+    return result;
+  }
+
+  function normalizeTargetSnapshots(targets) {
+    if (!Array.isArray(targets)) {
+      return [];
+    }
+    return targets
+      .map((target) => {
+        const itemClass = String(target?.itemClass || target?.item?.className || "").trim();
+        const item = itemClass ? itemsByClass.get(itemClass) : null;
+        const itemName = String(target?.itemName || target?.item?.name || item?.name || itemClass).trim();
+        const rate = Number(target?.rate);
+        if (!itemClass || !itemName || !Number.isFinite(rate) || rate <= 0) {
+          return null;
+        }
+        return {
+          itemClass,
+          itemName,
+          rate,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function targetPlanKey(targets) {
+    return normalizeTargetSnapshots(targets)
+      .map((target) => `${target.itemClass}:${formatPlanRateKey(target.rate)}`)
+      .sort()
+      .join("|");
+  }
+
+  function formatPlanRateKey(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? String(Math.round(number * 1e9) / 1e9) : "";
+  }
+
+  function targetPlanLabel(targets) {
+    const normalized = normalizeTargetSnapshots(targets);
+    return normalized
+      .map((target) => `${target.itemName} (${formatNumber(target.rate)})`)
+      .join(" + ");
+  }
+
+  function addTargetPlanToList(list, targets, limit = Infinity) {
+    const normalized = normalizeTargetSnapshots(targets);
+    const key = targetPlanKey(normalized);
+    if (!key) {
+      return false;
+    }
+    const existingIndex = list.findIndex((entry) => entry.key === key);
+    if (existingIndex >= 0) {
+      list.splice(existingIndex, 1);
+    }
+    list.unshift({
+      key,
+      label: targetPlanLabel(normalized),
+      targets: normalized,
+      savedAt: Date.now(),
+    });
+    if (Number.isFinite(limit) && list.length > limit) {
+      list.length = limit;
+    }
+    return true;
+  }
+
+  function addTargetPlanToHistory(targets) {
+    if (addTargetPlanToList(targetHistory, targets, TARGET_HISTORY_LIMIT)) {
+      renderTargetPlanSelectors();
+    }
+  }
+
+  function saveCurrentTargetPlan() {
+    const targets = collectTargets();
+    if (!targets.length) {
+      return;
+    }
+    const snapshots = targetSnapshotsFromTargets(targets);
+    addTargetPlanToList(savedTargetPlans, snapshots);
+    savePlannerState();
+    renderTargetPlanSelectors();
+    setStatus(`Saved target plan: ${targetPlanLabel(snapshots)}.`, false);
+  }
+
+  function renderTargetPlanSelectors() {
+    renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, "No saved plans", "Select a saved plan");
+    renderTargetPlanPicker(historyPlanSelect, targetHistory, "No recent history", "Select a recent plan");
+  }
+
+  function renderTargetPlanPicker(picker, plans, emptyText, placeholderText) {
+    if (!(picker instanceof HTMLElement)) {
+      return;
+    }
+    const button = picker.querySelector(".plan-picker-button");
+    const menu = picker.querySelector(".plan-picker-menu");
+    if (!(button instanceof HTMLButtonElement) || !(menu instanceof HTMLElement)) {
+      return;
+    }
+    button.textContent = plans.length ? placeholderText : emptyText;
+    button.disabled = !plans.length;
+    menu.hidden = true;
+    menu.replaceChildren();
+    plans.forEach((plan) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "plan-picker-option";
+      option.dataset.planKey = plan.key;
+      option.setAttribute("role", "option");
+      option.title = plan.label || targetPlanLabel(plan.targets);
+      option.setAttribute("aria-label", option.title);
+      option.appendChild(renderTargetPlanSummary(plan.targets, { iconsOnly: true }));
+      menu.appendChild(option);
+    });
+  }
+
+  function renderTargetPlanSummary(targets, options = {}) {
+    const summary = document.createElement("span");
+    summary.className = `plan-picker-summary${options.iconsOnly ? " icons-only" : ""}`;
+    normalizeTargetSnapshots(targets).forEach((target, index) => {
+      if (index > 0 && !options.iconsOnly) {
+        summary.appendChild(document.createTextNode(" + "));
+      }
+      const token = document.createElement("span");
+      token.className = "plan-picker-target";
+      const item = itemsByClass.get(target.itemClass) || {
+        className: target.itemClass,
+        name: target.itemName,
+      };
+      token.append(
+        makeMaterialIcon(item, "plan-picker-icon"),
+      );
+      if (!options.iconsOnly) {
+        token.appendChild(document.createTextNode(`${target.itemName} (${formatNumber(target.rate)})`));
+      } else {
+        token.appendChild(document.createTextNode(`(${formatNumber(target.rate)})`));
+      }
+      summary.appendChild(token);
+    });
+    return summary;
+  }
+
+  function handleTargetPlanPickerClick(event, picker, plans) {
+    if (!(picker instanceof HTMLElement)) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target : null;
+    const option = target?.closest(".plan-picker-option");
+    if (option instanceof HTMLElement) {
+      const plan = plans.find((entry) => entry.key === option.dataset.planKey);
+      closeTargetPlanPickers();
+      if (plan) {
+        applyTargetPlan(plan.targets);
+        calculate();
+      }
+      return;
+    }
+    const button = target?.closest(".plan-picker-button");
+    if (!(button instanceof HTMLButtonElement) || button.disabled) {
+      return;
+    }
+    event.stopPropagation();
+    const menu = picker.querySelector(".plan-picker-menu");
+    if (!(menu instanceof HTMLElement)) {
+      return;
+    }
+    const shouldOpen = menu.hidden;
+    closeTargetPlanPickers();
+    menu.hidden = !shouldOpen;
+  }
+
+  function closeTargetPlanPickers() {
+    document.querySelectorAll(".plan-picker-menu").forEach((menu) => {
+      if (menu instanceof HTMLElement) {
+        menu.hidden = true;
+      }
+    });
+  }
+
+  function applyTargetPlan(targets) {
+    const normalized = normalizeTargetSnapshots(targets);
+    if (!normalized.length) {
+      return;
+    }
+    suppressStateSave = true;
+    targetRows.replaceChildren();
+    normalized.forEach((target) => {
+      const item = itemsByClass.get(target.itemClass) || null;
+      addTargetRow(item, target.rate, { focus: false, save: false });
+      const row = targetRows.lastElementChild;
+      if (!item && row) {
+        row.dataset.itemClass = target.itemClass;
+        row.querySelector(".item-input").value = target.itemName;
+      }
+    });
+    suppressStateSave = false;
+    updateRemoveButtons();
+    activatePlanCacheForCurrentTargets();
+    savePlannerState();
   }
 
   function initializeRecipeSelection(payload) {
@@ -325,6 +558,20 @@
     return normalizeRecipeIdSet(recipeCatalog.defaultEnabledRecipeIds);
   }
 
+  function lockedDefaultRecipeIdSet() {
+    const locked = new Set();
+    const defaults = defaultRecipeIdSet();
+    (recipeCatalog.materials || []).forEach((group) => {
+      const baseRecipeIds = (group.recipes || [])
+        .map((recipe) => String(recipe?.id || "").trim())
+        .filter((recipeId) => recipeId && defaults.has(recipeId));
+      if (baseRecipeIds.length === 1) {
+        locked.add(baseRecipeIds[0]);
+      }
+    });
+    return locked;
+  }
+
   function selectableRecipeIdList() {
     return normalizedRecipeIdList(recipeCatalog.selectableRecipeIds);
   }
@@ -335,22 +582,47 @@
 
   function ensureDefaultRecipesSelected() {
     const selectable = selectableRecipeIdSet();
-    defaultRecipeIdSet().forEach((recipeId) => {
+    lockedDefaultRecipeIdSet().forEach((recipeId) => {
       if (selectable.has(recipeId)) {
         selectedRecipeIds.add(recipeId);
       }
     });
   }
 
+  function resetToDefaultRecipes() {
+    const selectable = selectableRecipeIdSet();
+    const defaults = defaultRecipeIdSet();
+    selectedRecipeIds.clear();
+    defaults.forEach((recipeId) => {
+      if (selectable.has(recipeId)) {
+        selectedRecipeIds.add(recipeId);
+      }
+    });
+    ensureDefaultRecipesSelected();
+  }
+
   function isDefaultRecipeId(recipeId) {
     return defaultRecipeIdSet().has(String(recipeId || "").trim());
   }
 
-  function selectedAlternateRecipeCount() {
-    const defaults = defaultRecipeIdSet();
+  function isLockedDefaultRecipeId(recipeId) {
+    return lockedDefaultRecipeIdSet().has(String(recipeId || "").trim());
+  }
+
+  function selectedOptionalRecipeCount() {
+    const locked = lockedDefaultRecipeIdSet();
     return selectableRecipeIdList()
-      .filter((recipeId) => !defaults.has(recipeId) && selectedRecipeIds.has(recipeId))
+      .filter((recipeId) => !locked.has(recipeId) && selectedRecipeIds.has(recipeId))
       .length;
+  }
+
+  function isDefaultRecipeSelection() {
+    const selectable = selectableRecipeIdSet();
+    const defaults = defaultRecipeIdSet();
+    if (selectedRecipeIds.size !== Array.from(defaults).filter((recipeId) => selectable.has(recipeId)).length) {
+      return false;
+    }
+    return selectableRecipeIdList().every((recipeId) => selectedRecipeIds.has(recipeId) === defaults.has(recipeId));
   }
 
   function allSelectableRecipesSelected() {
@@ -2368,7 +2640,7 @@
     defaultButton.type = "button";
     defaultButton.className = "secondary-button";
     defaultButton.dataset.recipeFilterAction = "clear-alternates";
-    defaultButton.textContent = "Clear All";
+    defaultButton.textContent = "Reset All";
     const selectedOnlyButton = document.createElement("button");
     selectedOnlyButton.type = "button";
     selectedOnlyButton.className = "secondary-button recipe-filter-toggle";
@@ -2401,13 +2673,7 @@
       if (isRecipeFilterControlDisabled(defaultButton)) {
         return;
       }
-      const defaults = defaultRecipeIdSet();
-      Array.from(selectedRecipeIds).forEach((recipeId) => {
-        if (!defaults.has(recipeId)) {
-          selectedRecipeIds.delete(recipeId);
-        }
-      });
-      ensureDefaultRecipesSelected();
+      resetToDefaultRecipes();
       savePlannerState();
       updateRecipeFilterButton();
       renderCurrentRecipeFilterList();
@@ -2503,8 +2769,8 @@
     }
     setRecipeFilterControlDisabled(
       overlay.querySelector('[data-recipe-filter-action="clear-alternates"]'),
-      selectedAlternateRecipeCount() === 0,
-      "No optional recipes are currently selected.",
+      isDefaultRecipeSelection(),
+      "All default recipes are already selected and no optional recipes are selected.",
     );
     setRecipeFilterControlDisabled(
       overlay.querySelector('[data-recipe-filter-action="select-all"]'),
@@ -2613,12 +2879,12 @@
 
   function groupHasSelectedAlternateRecipe(group, recipes = null) {
     const source = Array.isArray(recipes) ? recipes : group?.recipes;
-    return (source || []).some((recipe) => isSelectedAlternateRecipe(recipe));
+    return (source || []).some((recipe) => isSelectedOptionalRecipe(recipe));
   }
 
-  function isSelectedAlternateRecipe(recipe) {
+  function isSelectedOptionalRecipe(recipe) {
     const recipeId = String(recipe?.id || "").trim();
-    return Boolean(recipeId) && selectedRecipeIds.has(recipeId) && !isDefaultRecipeId(recipeId);
+    return Boolean(recipeId) && selectedRecipeIds.has(recipeId) && !isLockedDefaultRecipeId(recipeId);
   }
 
   function recipeFilterGroupOpen(group, recipes, context) {
@@ -2650,7 +2916,7 @@
     recipeCatalog.materials.forEach((group) => {
       const recipes = (group.recipes || []).filter((recipe) => (
         (!hasExactRecipeFilter || exactRecipeIds.has(recipe.id))
-        && (!selectedOnly || isSelectedAlternateRecipe(recipe))
+        && (!selectedOnly || isSelectedOptionalRecipe(recipe))
         && recipeMatchesQuery(group, recipe, query)
       ));
       if (!recipes.length) {
@@ -2731,10 +2997,11 @@
     const row = document.createElement("label");
     row.className = "recipe-row";
     const isDefaultRecipe = isDefaultRecipeId(recipe.id);
+    const isLockedDefaultRecipe = isLockedDefaultRecipeId(recipe.id);
     if (options.required) {
       row.classList.add("required");
     }
-    if (isDefaultRecipe) {
+    if (isLockedDefaultRecipe) {
       row.classList.add("base-locked");
       row.title = "Base recipes are always enabled.";
     }
@@ -2745,9 +3012,9 @@
     checkbox.type = "checkbox";
     checkbox.className = "recipe-filter-checkbox";
     checkbox.dataset.recipeId = recipe.id;
-    checkbox.checked = isDefaultRecipe || selectedRecipeIds.has(recipe.id);
-    checkbox.disabled = isDefaultRecipe;
-    if (isDefaultRecipe) {
+    checkbox.checked = isLockedDefaultRecipe || selectedRecipeIds.has(recipe.id);
+    checkbox.disabled = isLockedDefaultRecipe;
+    if (isLockedDefaultRecipe) {
       checkbox.title = "Base recipes are always enabled.";
     }
     checkbox.addEventListener("change", () => {
@@ -2781,7 +3048,7 @@
     if (!recipeId) {
       return;
     }
-    if (!selected && isDefaultRecipeId(recipeId)) {
+    if (!selected && isLockedDefaultRecipeId(recipeId)) {
       selectedRecipeIds.add(recipeId);
       document.querySelectorAll(".recipe-filter-checkbox").forEach((checkbox) => {
         if (checkbox.dataset.recipeId === recipeId) {
@@ -2856,7 +3123,7 @@
   }
 
   function canSwitchRecipe(recipe) {
-    return false;
+    return Array.isArray(recipe?.replacementOptions) && recipe.replacementOptions.length > 1;
   }
 
   function openRecipeSwitchDialog(recipe) {

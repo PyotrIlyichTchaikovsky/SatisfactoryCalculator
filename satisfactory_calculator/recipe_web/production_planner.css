@@ -103,6 +103,130 @@ select {
   gap: 8px;
 }
 
+.plan-library {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.plan-select-field {
+  display: grid;
+  gap: 5px;
+}
+
+.plan-select-field > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.plan-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.plan-picker-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-picker-button::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  margin-left: 10px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #687386;
+}
+
+.plan-picker-button:disabled {
+  background: #f3f6f8;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.plan-picker-button:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.plan-picker-menu {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(18, 32, 46, 0.18);
+}
+
+.plan-picker-option {
+  display: block;
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid #edf0f4;
+  background: #ffffff;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-picker-option:last-child {
+  border-bottom: 0;
+}
+
+.plan-picker-option:hover,
+.plan-picker-option:focus {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.plan-picker-summary {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-picker-summary.icons-only {
+  flex-wrap: wrap;
+  gap: 5px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.plan-picker-target {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  white-space: nowrap;
+}
+
 .result-actions {
   display: flex;
   flex-wrap: wrap;
@@ -125,7 +249,7 @@ h2 {
 
 .target-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 136px auto;
+  grid-template-columns: minmax(0, 1fr) 136px 36px;
   gap: 10px;
   align-items: end;
   padding: 12px;
@@ -181,6 +305,7 @@ h2 {
 
 .target-item-icon,
 .suggestion-icon,
+.plan-picker-icon,
 .recipe-material-icon,
 .recipe-formula-icon {
   display: inline-block;
@@ -205,6 +330,11 @@ h2 {
 .recipe-material-icon {
   width: 22px;
   height: 22px;
+}
+
+.plan-picker-icon {
+  width: 44px;
+  height: 44px;
 }
 
 .recipe-formula-icon {
@@ -364,9 +494,11 @@ h2 {
 }
 
 .remove-button {
-  width: 76px;
+  width: 36px;
   padding: 0;
   color: #7c2d12;
+  font-size: 22px;
+  line-height: 1;
 }
 
 .form-actions {
@@ -944,6 +1076,22 @@ h2 {
 .recipe-row.focused {
   background: #f4fbfa;
   box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.42);
+  animation: recipe-focus-flash 0.9s ease-out 1;
+}
+
+@keyframes recipe-focus-flash {
+  0% {
+    outline: 2px solid rgba(20, 184, 166, 0);
+    box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.42), 0 0 0 0 rgba(20, 184, 166, 0);
+  }
+  28% {
+    outline: 2px solid rgba(20, 184, 166, 0.9);
+    box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.72), 0 0 0 3px rgba(20, 184, 166, 0.22);
+  }
+  100% {
+    outline: 2px solid rgba(20, 184, 166, 0);
+    box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.42), 0 0 0 0 rgba(20, 184, 166, 0);
+  }
 }
 
 .recipe-row-name {
@@ -1060,9 +1208,23 @@ h2 {
 }
 
 .recipe-switch-option.current {
-  border-color: var(--accent);
+  border-color: #0f766e;
+  border-width: 2px;
   background: #f0fdfa;
   cursor: default;
+  animation: recipe-switch-current-flash 0.9s ease-out 1;
+}
+
+@keyframes recipe-switch-current-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(15, 118, 110, 0);
+  }
+  28% {
+    box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.22);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(15, 118, 110, 0);
+  }
 }
 
 .recipe-switch-name {

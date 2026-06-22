@@ -48,6 +48,24 @@ class ProductionPlannerCoreTests(unittest.TestCase):
         self.assertGreater(result["summary"]["requiredRecipeCount"], 0)
         self.assertTrue(result["requiredRecipeIds"])
 
+    def test_raw_totals_include_recipe_switch_options(self) -> None:
+        result = self.planner.plan([{"itemClass": "Desc_Coal_C", "rate": 60}])
+        coal = next(row for row in result["rawTotals"] if row["item"]["className"] == "Desc_Coal_C")
+        option_ids = {option["id"] for option in coal["replacementOptions"]}
+
+        self.assertIn("__raw__", option_ids)
+        self.assertIn("Recipe_Coal_Iron_C", option_ids)
+
+    def test_preferred_plan_can_switch_raw_material_to_recipe(self) -> None:
+        result = self.planner.plan(
+            [{"itemClass": "Desc_Coal_C", "rate": 60}],
+            preferred_plan=[{"id": "Recipe_Coal_Iron_C", "scale": 1}],
+        )
+        recipe_run_ids = {run["id"] for run in result["recipeRuns"]}
+
+        self.assertIn("Recipe_Coal_Iron_C", recipe_run_ids)
+        self.assertFalse(any(row["item"]["className"] == "Desc_Coal_C" for row in result["rawTotals"]))
+
     def test_rejects_too_many_targets(self) -> None:
         targets = [{"itemClass": "Desc_IronPlate_C", "rate": 1} for _ in range(MAX_TARGETS + 1)]
 

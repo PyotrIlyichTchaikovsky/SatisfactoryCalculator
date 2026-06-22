@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Satisfactory Production Planner</title>
-  <link rel="stylesheet" href="production_planner.css?v=edge-label-raw-scale-20260616-1">
-  <script defer src="production_planner.js?v=edge-label-raw-scale-20260616-1"></script>
+  <link rel="stylesheet" href="production_planner.css?v=raw-switch-flash-plan-icons-20260622-2">
+  <script defer src="production_planner.js?v=raw-switch-flash-plan-icons-20260622-2"></script>
 </head>
 <body>
   <header class="app-header">
@@ -25,9 +25,27 @@
         </div>
       </div>
 
-      <form id="plannerForm" autocomplete="off">
+      <div class="plan-library" aria-label="Saved and recent target plans">
+        <div class="plan-select-field">
+          <span>Saved Plans</span>
+          <div id="savedPlanSelect" class="plan-picker">
+            <button class="plan-picker-button" type="button" disabled>No saved plans</button>
+            <div class="plan-picker-menu" role="listbox" hidden></div>
+          </div>
+        </div>
+        <div class="plan-select-field">
+          <span>Recent History</span>
+          <div id="historyPlanSelect" class="plan-picker">
+            <button class="plan-picker-button" type="button" disabled>No recent history</button>
+            <div class="plan-picker-menu" role="listbox" hidden></div>
+          </div>
+        </div>
+      </div>
+
+      <form id="plannerForm" autocomplete="off" novalidate>
         <div id="targetRows" class="target-rows"></div>
         <div class="form-actions">
+          <button id="savePlanButton" class="secondary-button" type="button">Save</button>
           <button class="primary-button" type="submit">Calculate</button>
         </div>
       </form>
@@ -64,11 +82,11 @@
       <div class="field amount-field">
         <label>Rate per Minute</label>
         <div class="amount-box">
-          <input class="amount-input" type="number" min="0" step="0.001" placeholder="60">
+          <input class="amount-input" type="number" min="0" step="1" placeholder="60">
           <span class="unit-label">/ min</span>
         </div>
       </div>
-      <button class="remove-button" type="button" title="Remove item" aria-label="Remove item">Remove</button>
+      <button class="remove-button" type="button" title="Remove item" aria-label="Remove item">×</button>
     </div>
   </template>
 </body>

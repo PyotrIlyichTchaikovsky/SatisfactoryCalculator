@@ -57,6 +57,7 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
             result = self.planner.plan(
                 payload.get("targets", []),
                 enabled_recipe_ids=payload.get("enabledRecipeIds"),
+                preferred_plan=payload.get("preferredPlan"),
             )
         except PlannerError as exc:
             self._send_json({"error": str(exc)}, status=400)

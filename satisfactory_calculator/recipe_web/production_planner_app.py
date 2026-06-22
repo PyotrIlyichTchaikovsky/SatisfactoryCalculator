@@ -306,6 +306,7 @@ class ProductionPlannerApp:
                 self.planner.plan,
                 payload.get("targets", []),
                 enabled_recipe_ids=payload.get("enabledRecipeIds"),
+                preferred_plan=payload.get("preferredPlan"),
             )
         )
         try:
@@ -467,6 +468,7 @@ def cache_control_for_static(file_path: Path) -> str:
 def plan_cache_key(payload: JsonDict) -> str:
     targets = payload.get("targets", [])
     enabled_recipe_ids = payload.get("enabledRecipeIds")
+    preferred_plan = payload.get("preferredPlan")
     normalized_targets = []
     if isinstance(targets, list):
         for target in targets:
@@ -485,10 +487,24 @@ def plan_cache_key(payload: JsonDict) -> str:
     normalized_enabled_recipe_ids = enabled_recipe_ids
     if isinstance(enabled_recipe_ids, list):
         normalized_enabled_recipe_ids = sorted(str(value or "").strip() for value in enabled_recipe_ids)
+    normalized_preferred_plan = preferred_plan
+    if isinstance(preferred_plan, list):
+        normalized_preferred_plan = []
+        for entry in preferred_plan:
+            if isinstance(entry, dict):
+                normalized_preferred_plan.append(
+                    {
+                        "id": str(entry.get("id") or entry.get("nodeId") or "").strip(),
+                        "scale": entry.get("scale"),
+                    }
+                )
+            else:
+                normalized_preferred_plan.append(str(entry or "").strip())
     return json.dumps(
         {
             "targets": normalized_targets,
             "enabledRecipeIds": normalized_enabled_recipe_ids,
+            "preferredPlan": normalized_preferred_plan,
         },
         ensure_ascii=False,
         sort_keys=True,

@@ -303,13 +303,20 @@ class ProductionPlanner:
     ) -> dict[str, Any]:
         parsed_targets = self._parse_targets(targets)
         active_recipe_ids = self._parse_enabled_recipe_ids(enabled_recipe_ids)
+        preferred_plan_nodes = self._parse_preferred_plan(preferred_plan)
         try:
-            solution = self._solve_linear_plan(parsed_targets, active_recipe_ids, set())
+            if preferred_plan_nodes:
+                solution = self._solve_preferred_plan_milp(parsed_targets, preferred_plan_nodes)
+            else:
+                solution = self._solve_linear_plan(parsed_targets, active_recipe_ids, set())
         except PlannerError as exc:
             expansion = self._minimum_recipe_expansion(parsed_targets, active_recipe_ids)
             if expansion and expansion["recipeIds"]:
                 return self._recipe_expansion_response(parsed_targets, active_recipe_ids, expansion, str(exc))
             raise
+
+        effective_selections = self._used_replacement_recipe_selections(solution["recipeRuns"])
+        self._attach_raw_recipe_switch_options(solution, effective_selections)
 
         return {
             "targets": [
@@ -322,7 +329,7 @@ class ProductionPlanner:
             ],
             "targetAllocations": solution["targetAllocations"],
             "recipeMode": "custom",
-            "selectedRecipes": {},
+            "selectedRecipes": effective_selections,
             "enabledRecipeIds": sorted(active_recipe_ids),
             "roots": solution["layers"],
             "layers": solution["layers"],
@@ -341,7 +348,7 @@ class ProductionPlanner:
                 "refined": False,
                 "changeObjectiveValue": solution.get("changeObjectiveValue", 0),
             },
-            "preferredPlan": self._solution_plan_nodes(solution),
+            "preferredPlan": solution.get("preferredPlan") or self._solution_plan_nodes(solution),
         }
 
     def _recipe_expansion_response(
@@ -750,6 +757,20 @@ class ProductionPlanner:
             )
         return effective_selections
 
+    def _used_replacement_recipe_selections(self, recipe_runs: list[dict[str, Any]]) -> dict[str, str]:
+        used_recipe_ids = {
+            str(run.get("id") or "").strip()
+            for run in recipe_runs
+            if float(run.get("scale") or 0.0) > _RESULT_EPS
+        }
+        result: dict[str, str] = {}
+        for group in self.replacement_groups:
+            for recipe_id in group.recipe_ids:
+                if recipe_id in used_recipe_ids:
+                    result[group.item_class] = recipe_id
+                    break
+        return result
+
     def _parse_targets(self, targets: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         if not isinstance(targets, list):
             raise PlannerError("targets must be an array.")
@@ -1021,6 +1042,10 @@ class ProductionPlanner:
             lower_row[index] = 1.0
             lower_row[x_count + index] = -self._milp_min_use(node_id, preferred_plan_nodes)
             constraints.append(LinearConstraint(lower_row, 0.0, float("inf")))
+            if node_id in preferred_plan_nodes:
+                preferred_row = [0.0 for _ in range(variable_count)]
+                preferred_row[x_count + index] = 1.0
+                constraints.append(LinearConstraint(preferred_row, 1.0, 1.0))
 
         change_costs = [0.0 for _ in range(x_count)] + [
             -1.0 if node_id in preferred_plan_nodes else 1.0
