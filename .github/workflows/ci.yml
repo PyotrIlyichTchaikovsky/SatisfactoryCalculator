@@ -33,9 +33,13 @@ jobs:
           satisfactory_calculator/recipe_web/production_planner_core.py
           satisfactory_calculator/recipe_web/production_planner_server.py
           satisfactory_calculator/recipe_web/production_planner_app.py
+          scripts/build_frontend.py
 
       - name: Run Python tests
         run: python -m unittest discover -s satisfactory_calculator/tests -v
 
       - name: Check frontend syntax
         run: node --check satisfactory_calculator/recipe_web/production_planner.js
+
+      - name: Build frontend bundle
+        run: python scripts/build_frontend.py

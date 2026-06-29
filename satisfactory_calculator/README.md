@@ -36,8 +36,12 @@ directly to the public internet.
 
 ## Production Deployment
 
-Run the production API with Uvicorn, and put Caddy or Nginx in front of it for
-HTTPS, static files, compression, and public caching.
+For the planned cloud deployment, use Cloudflare Pages for the frontend and
+Google Cloud Run for the Python API. See `deploy/CLOUD.md`.
+
+The older single-server deployment can still run the production API with
+Uvicorn, with Caddy or Nginx in front of it for HTTPS, static files,
+compression, and public caching.
 
 Example API process:
 

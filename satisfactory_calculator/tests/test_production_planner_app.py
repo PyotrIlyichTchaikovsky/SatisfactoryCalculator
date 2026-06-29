@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import sys
 import unittest
@@ -15,9 +16,19 @@ import production_planner_app  # noqa: E402
 
 class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        self.original_settings = production_planner_app.app.settings
         production_planner_app.plan_cache._entries.clear()
 
-    async def call_app(self, method: str, path: str, body: bytes = b"") -> tuple[int, dict[str, str], bytes]:
+    def tearDown(self) -> None:
+        production_planner_app.app.settings = self.original_settings
+
+    async def call_app(
+        self,
+        method: str,
+        path: str,
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict[str, str], bytes]:
         messages: list[dict[str, Any]] = []
         sent_body = False
 
@@ -32,7 +43,15 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
             messages.append(message)
 
         await production_planner_app.app(
-            {"type": "http", "method": method, "path": path, "headers": []},
+            {
+                "type": "http",
+                "method": method,
+                "path": path,
+                "headers": [
+                    (key.lower().encode("latin-1"), value.encode("latin-1"))
+                    for key, value in (headers or {}).items()
+                ],
+            },
             receive,
             send,
         )
@@ -65,6 +84,32 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("excelPath", payload)
         self.assertNotIn("sourceDocsJson", payload)
+
+    async def test_api_cors_headers_for_allowed_origin(self) -> None:
+        production_planner_app.app.settings = replace(
+            self.original_settings,
+            allowed_origins=("https://planner.example",),
+        )
+
+        status, headers, body = await self.call_app(
+            "OPTIONS",
+            "/api/plan",
+            headers={"Origin": "https://planner.example"},
+        )
+
+        self.assertEqual(status, 204)
+        self.assertEqual(body, b"")
+        self.assertEqual(headers["access-control-allow-origin"], "https://planner.example")
+        self.assertEqual(headers["access-control-allow-methods"], "GET,POST,OPTIONS")
+
+        status, headers, _body = await self.call_app(
+            "GET",
+            "/api/health",
+            headers={"Origin": "https://unlisted.example"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertNotIn("access-control-allow-origin", headers)
 
     async def test_static_cache_and_sensitive_file_blocking(self) -> None:
         status, headers, _body = await self.call_app("HEAD", "/production_planner.js")

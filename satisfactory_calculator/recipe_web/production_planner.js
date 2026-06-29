@@ -25,6 +25,7 @@
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
   const DIRECT_RAW_RECIPE_ID = "__raw__";
   const TARGET_HISTORY_LIMIT = 10;
+  const plannerConfig = normalizePlannerConfig(window.PLANNER_CONFIG);
   const recipeModeInputs = [];
 
   let items = [];
@@ -79,6 +80,7 @@
     preferredPlanByTargetKey.clear();
     activePreferredPlan = [];
   }
+  initializeFrontendMonitoring();
   loadInitialData();
 
   async function loadInitialData() {
@@ -231,7 +233,7 @@
   }
 
   async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options);
+    const response = await fetch(apiUrl(url), options);
     let payload = null;
     try {
       payload = await response.json();
@@ -242,6 +244,49 @@
       throw new Error(payload?.error || `${response.status} ${response.statusText}`);
     }
     return payload || {};
+  }
+
+  function normalizePlannerConfig(config) {
+    const source = config && typeof config === "object" ? config : {};
+    const apiBaseUrl = String(source.apiBaseUrl || "").trim().replace(/\/+$/, "");
+    return {
+      apiBaseUrl,
+      sentryDsn: String(source.sentryDsn || "").trim(),
+      sentryEnvironment: String(source.sentryEnvironment || "production").trim(),
+      sentryRelease: String(source.sentryRelease || "").trim(),
+      adsenseClient: String(source.adsenseClient || "").trim(),
+      adsenseEnabled: Boolean(source.adsenseEnabled),
+    };
+  }
+
+  function apiUrl(path) {
+    const cleanPath = String(path || "");
+    if (!plannerConfig.apiBaseUrl) {
+      return cleanPath;
+    }
+    return `${plannerConfig.apiBaseUrl}/${cleanPath.replace(/^\/+/, "")}`;
+  }
+
+  function initializeFrontendMonitoring() {
+    if (!plannerConfig.sentryDsn) {
+      return;
+    }
+    const initialize = () => {
+      if (!window.Sentry?.init) {
+        console.warn("Sentry DSN is configured, but the browser SDK is not loaded.");
+        return;
+      }
+      window.Sentry.init({
+        dsn: plannerConfig.sentryDsn,
+        environment: plannerConfig.sentryEnvironment,
+        release: plannerConfig.sentryRelease || undefined,
+      });
+    };
+    if (window.Sentry?.init) {
+      initialize();
+    } else {
+      window.addEventListener("load", initialize, { once: true });
+    }
   }
 
   function renderPlannerResult(result, options = {}) {

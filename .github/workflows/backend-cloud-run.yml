@@ -1,0 +1,65 @@
+name: Deploy Backend to Cloud Run
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+  ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}
+  SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        run: |
+          test -n "$PROJECT_ID"
+          test -n "$REGION"
+          test -n "$ARTIFACT_REPOSITORY"
+          test -n "$SERVICE_NAME"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push backend image
+        id: image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/${SERVICE_NAME}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Cloud Run service
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ steps.image.outputs.image }}
+          env_vars: |
+            PLANNER_ALLOWED_ORIGINS=${{ vars.PLANNER_ALLOWED_ORIGINS }}
+            PLANNER_LOG_LEVEL=INFO
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            SENTRY_ENVIRONMENT=production
+            SENTRY_RELEASE=${{ github.sha }}
+
+      - name: Show service URL
+        run: gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format="value(status.url)"
