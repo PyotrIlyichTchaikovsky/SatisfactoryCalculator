@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shutil
 from datetime import date
 from pathlib import Path
@@ -21,13 +23,13 @@ def main() -> None:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    copy_static_assets(output_dir)
-
     config = frontend_config()
-    html = render_html(SOURCE_DIR / "production_planner.html", config)
+    asset_names = write_hashed_assets(output_dir, config)
+    copy_icon_assets(output_dir)
+
+    html = render_html(SOURCE_DIR / "production_planner.html", config, asset_names)
     (output_dir / "index.html").write_text(html, encoding="utf-8")
     (output_dir / "production_planner.html").write_text(html, encoding="utf-8")
-    (output_dir / "planner_config.js").write_text(render_planner_config(config), encoding="utf-8")
     (output_dir / "_headers").write_text(render_headers(config), encoding="utf-8")
     (output_dir / "robots.txt").write_text(render_robots(config["publicSiteUrl"]), encoding="utf-8")
     (output_dir / "sitemap.xml").write_text(render_sitemap(config["publicSiteUrl"]), encoding="utf-8")
@@ -39,10 +41,22 @@ def main() -> None:
     print(f"Built frontend into {output_dir}")
 
 
-def copy_static_assets(output_dir: Path) -> None:
-    for file_name in ("production_planner.css", "production_planner.js"):
-        shutil.copy2(SOURCE_DIR / file_name, output_dir / file_name)
+def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str, str]:
+    assets = {
+        "production_planner.css": (SOURCE_DIR / "production_planner.css").read_bytes(),
+        "production_planner.js": (SOURCE_DIR / "production_planner.js").read_bytes(),
+        "planner_config.js": render_planner_config(config).encode("utf-8"),
+    }
+    asset_names = {}
+    for source_name, content in assets.items():
+        stem, suffix = source_name.rsplit(".", 1)
+        hashed_name = f"{stem}.{content_hash(content)}.{suffix}"
+        (output_dir / hashed_name).write_bytes(content)
+        asset_names[source_name] = hashed_name
+    return asset_names
 
+
+def copy_icon_assets(output_dir: Path) -> None:
     icons_dir = SOURCE_DIR / "data" / "icons"
     if icons_dir.exists():
         shutil.copytree(icons_dir, output_dir / "data" / "icons")
@@ -62,7 +76,7 @@ def frontend_config() -> dict[str, object]:
     }
 
 
-def render_html(source_path: Path, config: dict[str, object]) -> str:
+def render_html(source_path: Path, config: dict[str, object], asset_names: dict[str, str]) -> str:
     html = source_path.read_text(encoding="utf-8")
     injections: list[str] = []
     sentry_script_url = str(config["sentryBrowserScriptUrl"])
@@ -89,7 +103,7 @@ def render_html(source_path: Path, config: dict[str, object]) -> str:
     if injections:
         marker = '  <script defer src="planner_config.js'
         html = html.replace(marker, "\n".join(injections) + "\n" + marker, 1)
-    return html
+    return replace_asset_references(html, asset_names)
 
 
 def render_planner_config(config: dict[str, object]) -> str:
@@ -115,19 +129,16 @@ def render_headers(config: dict[str, object]) -> str:
             f"  Content-Security-Policy: {csp}",
             "",
             "/index.html",
-            "  Cache-Control: no-cache, max-age=0",
+            "  Cache-Control: no-store, max-age=0",
             "",
             "/production_planner.html",
-            "  Cache-Control: no-cache, max-age=0",
+            "  Cache-Control: no-store, max-age=0",
             "",
-            "/planner_config.js",
-            "  Cache-Control: no-cache, max-age=0",
+            "/*.js",
+            "  Cache-Control: public, max-age=31536000, immutable",
             "",
-            "/production_planner.css",
-            "  Cache-Control: public, max-age=604800",
-            "",
-            "/production_planner.js",
-            "  Cache-Control: public, max-age=604800",
+            "/*.css",
+            "  Cache-Control: public, max-age=31536000, immutable",
             "",
             "/data/icons/*",
             "  Cache-Control: public, max-age=2592000",
@@ -233,6 +244,16 @@ def render_ads_txt(adsense_client: str) -> str:
     if publisher_id.startswith("pub-"):
         return f"google.com, {publisher_id}, DIRECT, f08c47fec0942fa0\n"
     return f"google.com, pub-{publisher_id}, DIRECT, f08c47fec0942fa0\n"
+
+
+def replace_asset_references(html: str, asset_names: dict[str, str]) -> str:
+    for source_name, hashed_name in asset_names.items():
+        html = re.sub(rf"{re.escape(source_name)}(?:\?v=[^\"']*)?", hashed_name, html)
+    return html
+
+
+def content_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()[:10]
 
 
 def env(name: str, default: str = "") -> str:
