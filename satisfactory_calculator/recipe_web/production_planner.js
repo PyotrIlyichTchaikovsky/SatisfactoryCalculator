@@ -25,7 +25,6 @@
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
   const DIRECT_RAW_RECIPE_ID = "__raw__";
   const TARGET_HISTORY_LIMIT = 10;
-  const plannerConfig = normalizePlannerConfig(window.PLANNER_CONFIG);
   const recipeModeInputs = [];
 
   let items = [];
@@ -72,15 +71,22 @@
   });
   window.addEventListener("resize", handleWindowResize);
 
+  window.PlannerDiagnostics.configure(() => ({
+    targets: collectTargetState(),
+    enabledRecipeIds: selectedRecipeIdsPayload(),
+    preferredPlan: preferredPlanPayload(),
+    recipeNodePositions: Array.from(recipeNodePositions.entries()),
+    activeTab,
+  }));
   try {
     restorePreferredPlanCache(savedState.selectionCacheVersion === SELECTION_CACHE_VERSION ? savedState.preferredPlanByTarget : []);
     restoreRecipeNodePositions(savedState.recipeNodePositions);
   } catch (error) {
+    window.PlannerDiagnostics.reportError(error, "restore-state");
     console.error("Failed to restore planner state", error);
     preferredPlanByTargetKey.clear();
     activePreferredPlan = [];
   }
-  initializeFrontendMonitoring();
   loadInitialData();
 
   async function loadInitialData() {
@@ -99,15 +105,17 @@
       }
       renderTargetPlanSelectors();
       activatePlanCacheForCurrentTargets();
+      window.PlannerDiagnostics.setDataSummary(summary);
       dataSummary.textContent = summaryText(summary);
       setStatus("Loaded Excel recipe data from server. Select items and enter rates per minute.", false);
     } catch (error) {
+      window.PlannerDiagnostics.reportError(error, "load-data");
       if (!targetRows.querySelector(".target-row")) {
         addTargetRow(null, "", { focus: false, save: false });
       }
       renderTargetPlanSelectors();
       dataSummary.textContent = "Unable to connect to the production planner service";
-      setStatus(`Failed to load server data: ${error.message}. Start recipe_web/production_planner_server.py and reload.`, true);
+      setStatus(`Unable to load data: ${error.message} Please retry or use Report a problem.`, true);
     }
   }
 
@@ -121,6 +129,7 @@
     addTargetPlanToHistory(targetSnapshotsFromTargets(targets));
     savePlannerState();
 
+    let calculationResult = null;
     setStatus("Requesting calculation from the server...", false);
     try {
       const result = await fetchJson("/api/plan", {
@@ -135,6 +144,7 @@
           preferredPlan: options.usePreferredPlan ? preferredPlanPayload() : [],
         }),
       });
+      calculationResult = result;
       if (result.recipeExpansionRequired) {
         handleRecipeExpansionRequired(result, targets);
         return;
@@ -157,10 +167,11 @@
         false,
       );
     } catch (error) {
+      const issue = window.PlannerDiagnostics.reportError(error, "calculate-or-render", true, calculationResult);
       lastServerResult = null;
       lastServerTargets = [];
       lastServerPlanSignature = "";
-      setStatus(`Calculation failed: ${error.message}`, true);
+      setStatus(`Calculation failed: ${error.message} Problem ID: ${issue.id}. Use Report a problem to share details.`, true);
       treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
       tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
     }
@@ -233,60 +244,7 @@
   }
 
   async function fetchJson(url, options = {}) {
-    const response = await fetch(apiUrl(url), options);
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (_error) {
-      payload = null;
-    }
-    if (!response.ok) {
-      throw new Error(payload?.error || `${response.status} ${response.statusText}`);
-    }
-    return payload || {};
-  }
-
-  function normalizePlannerConfig(config) {
-    const source = config && typeof config === "object" ? config : {};
-    const apiBaseUrl = String(source.apiBaseUrl || "").trim().replace(/\/+$/, "");
-    return {
-      apiBaseUrl,
-      sentryDsn: String(source.sentryDsn || "").trim(),
-      sentryEnvironment: String(source.sentryEnvironment || "production").trim(),
-      sentryRelease: String(source.sentryRelease || "").trim(),
-      adsenseClient: String(source.adsenseClient || "").trim(),
-      adsenseEnabled: Boolean(source.adsenseEnabled),
-    };
-  }
-
-  function apiUrl(path) {
-    const cleanPath = String(path || "");
-    if (!plannerConfig.apiBaseUrl) {
-      return cleanPath;
-    }
-    return `${plannerConfig.apiBaseUrl}/${cleanPath.replace(/^\/+/, "")}`;
-  }
-
-  function initializeFrontendMonitoring() {
-    if (!plannerConfig.sentryDsn) {
-      return;
-    }
-    const initialize = () => {
-      if (!window.Sentry?.init) {
-        console.warn("Sentry DSN is configured, but the browser SDK is not loaded.");
-        return;
-      }
-      window.Sentry.init({
-        dsn: plannerConfig.sentryDsn,
-        environment: plannerConfig.sentryEnvironment,
-        release: plannerConfig.sentryRelease || undefined,
-      });
-    };
-    if (window.Sentry?.init) {
-      initialize();
-    } else {
-      window.addEventListener("load", initialize, { once: true });
-    }
+    return window.PlannerDiagnostics.fetchJson(url, options);
   }
 
   function renderPlannerResult(result, options = {}) {

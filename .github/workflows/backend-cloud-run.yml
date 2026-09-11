@@ -57,6 +57,7 @@ jobs:
           env_vars: |
             PLANNER_ALLOWED_ORIGINS=${{ vars.PLANNER_ALLOWED_ORIGINS }}
             PLANNER_LOG_LEVEL=INFO
+            PLANNER_MONITORING_TEST_TOKEN=${{ secrets.PLANNER_MONITORING_TEST_TOKEN }}
             SENTRY_DSN=${{ secrets.SENTRY_DSN }}
             SENTRY_ENVIRONMENT=production
             SENTRY_RELEASE=${{ github.sha }}

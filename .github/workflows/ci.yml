@@ -41,5 +41,8 @@ jobs:
       - name: Check frontend syntax
         run: node --check satisfactory_calculator/recipe_web/production_planner.js
 
+      - name: Test frontend diagnostics
+        run: node --test satisfactory_calculator/tests/planner_diagnostics.test.cjs
+
       - name: Build frontend bundle
         run: python scripts/build_frontend.py

@@ -7,12 +7,14 @@
   <title>Satisfactory Production Planner</title>
   <link rel="stylesheet" href="production_planner.css?v=layout-median-barycentric-20260622-1">
   <script defer src="planner_config.js?v=cloud-deploy-20260624-1"></script>
+  <script defer src="planner_diagnostics.js"></script>
   <script defer src="production_planner.js?v=layout-median-barycentric-20260622-1"></script>
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>Satisfactory Production Planner</h1>
+      <p id="monitoringTestStatus" role="status" hidden></p>
       <p id="dataSummary">Connecting to production planner service...</p>
     </div>
   </header>
@@ -57,6 +59,7 @@
       <div class="result-toolbar">
         <h2 id="resultHeading">Results</h2>
         <div class="result-actions">
+          <button id="reportProblemButton" class="secondary-button compact-button" type="button">Report a problem</button>
           <button id="resetLayoutButton" class="secondary-button compact-button" type="button">Reset Layout</button>
           <div class="tabs" role="tablist" aria-label="Result views">
             <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">Plan View</button>
@@ -70,6 +73,19 @@
       <div id="tableView" class="view-panel hidden"></div>
     </section>
   </main>
+
+  <dialog id="diagnosticsDialog" class="diagnostics-dialog" aria-labelledby="diagnosticsTitle">
+    <h2 id="diagnosticsTitle">Report a problem</h2>
+    <p id="diagnosticsNotice" role="status"></p>
+    <label for="diagnosticsOutput">Technical details and plan inputs</label>
+    <textarea id="diagnosticsOutput" readonly rows="12" spellcheck="false"></textarea>
+    <div class="panel-actions">
+      <button id="copyDiagnosticsButton" class="secondary-button" type="button">Copy report</button>
+      <button id="downloadDiagnosticsButton" class="secondary-button" type="button">Download report</button>
+      <a href="https://github.com/PyotrIlyichTchaikovsky/SatisfactoryCalculator/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer">Open GitHub issue</a>
+      <form method="dialog"><button class="secondary-button">Close</button></form>
+    </div>
+  </dialog>
 
   <template id="targetRowTemplate">
     <div class="target-row">

@@ -1455,3 +1455,23 @@ h2 {
   }
 
 }
+
+.diagnostics-dialog {
+  width: min(48rem, calc(100vw - 2rem));
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid #9ba8b8;
+  border-radius: 12px;
+  padding: 1.25rem;
+  background: #fff;
+  color: #172334;
+}
+.diagnostics-dialog::backdrop { background: rgb(15 23 42 / 55%); }
+.diagnostics-dialog textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: .75rem 0 1rem;
+  font: .875rem/1.5 monospace;
+}
+.diagnostics-dialog .panel-actions { flex-wrap: wrap; gap: .75rem; }

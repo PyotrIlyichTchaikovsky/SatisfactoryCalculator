@@ -120,3 +120,9 @@ node --check .\recipe_web\production_planner.js
 The regression tests cover core planning, Rocket Fuel production, missing recipe
 expansion, API input limits, static file blocking, cache headers, health checks,
 metrics, and plan caching.
+
+## Bug reports and monitoring
+
+Use **Report a problem** in the planner to review and copy/download a diagnostic report.
+See [monitoring setup and acceptance checks](deploy/MONITORING.md) for request IDs,
+Sentry, persistent Cloud Logging metrics and real calculation checks.

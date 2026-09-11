@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a calculation, display or service problem.
+title: "[Bug] "
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Diagnostic report
+      description: Use Report a problem on the planner. Review the report before pasting it here; it includes your plan inputs. You may instead attach the downloaded JSON file.
+      render: json
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot and additional details
+      description: A screenshot helps with graph layout problems. Remove anything you do not want to share publicly.

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import asyncio
+import logging
+import threading
+from unittest.mock import patch
 import sys
 import unittest
 from pathlib import Path
@@ -16,6 +20,7 @@ import production_planner_app  # noqa: E402
 
 class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        production_planner_app.app.last_monitoring_test = float("-inf")
         self.original_settings = production_planner_app.app.settings
         production_planner_app.plan_cache._entries.clear()
 
@@ -68,6 +73,134 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
         }
         return int(start["status"]), headers, response_body
 
+    async def test_request_ids_are_unique_and_correlate_with_logs(self) -> None:
+        with self.assertLogs("production_planner", level="INFO") as logs:
+            responses = await asyncio.gather(
+                self.call_app("GET", "/api/health", headers={"X-Request-ID": "forged"}),
+                self.call_app("GET", "/api/summary"),
+            )
+        ids = [headers["x-request-id"] for _, headers, _ in responses]
+        self.assertNotEqual(ids[0], ids[1])
+        self.assertTrue(all(len(value) == 32 for value in ids))
+        self.assertEqual(production_planner_app.request_id_context.get(), "")
+        self.assertTrue(all("x-planner-data-version" in headers for _, headers, _ in responses))
+
+    async def test_error_response_id_matches_capture_and_log(self) -> None:
+        captured = []
+        def capture(exc):
+            captured.append(production_planner_app.request_id_context.get())
+        log_ids = []
+        class Recorder(logging.Handler):
+            def emit(self, record):
+                log_ids.append(json.loads(production_planner_app.JsonLogFormatter().format(record)))
+        handler = Recorder()
+        production_planner_app.logger.addHandler(handler)
+        try:
+            with patch.object(production_planner_app.planner, "plan", side_effect=RuntimeError("private failure")), patch.object(production_planner_app, "capture_exception", side_effect=capture):
+                status, headers, body = await self.call_app("POST", "/api/plan", b'{"targets":[]}')
+        finally:
+            production_planner_app.logger.removeHandler(handler)
+        self.assertEqual(status, 500)
+        self.assertNotIn(b"private failure", body)
+        self.assertEqual(captured, [headers["x-request-id"]])
+        self.assertTrue(all(row["request_id"] == headers["x-request-id"] for row in log_ids))
+        self.assertEqual(log_ids[-1]["status"], 500)
+
+    async def test_validation_errors_have_id_without_exception_capture(self) -> None:
+        with patch.object(production_planner_app, "capture_exception") as capture:
+            status, headers, body = await self.call_app("POST", "/api/plan", b'{"targets":[]}')
+        self.assertEqual(status, 400)
+        self.assertIn("x-request-id", headers)
+        capture.assert_not_called()
+
+    async def test_late_worker_failure_keeps_original_request_id(self) -> None:
+        release_worker = threading.Event()
+        captured = []
+        def fail_later(*args, **kwargs):
+            release_worker.wait(timeout=2)
+            raise RuntimeError("late failure")
+        def capture(exc):
+            captured.append(production_planner_app.request_id_context.get())
+        production_planner_app.app.settings = replace(self.original_settings, plan_timeout_seconds=0.001)
+        with patch.object(production_planner_app.planner, "plan", side_effect=fail_later), patch.object(production_planner_app, "capture_exception", side_effect=capture):
+            try:
+                status, headers, body = await self.call_app("POST", "/api/plan", b'{"targets":[]}')
+                self.assertEqual(status, 503)
+            finally:
+                release_worker.set()
+            for _ in range(100):
+                if captured:
+                    break
+                await asyncio.sleep(0.01)
+        self.assertEqual(captured, [headers["x-request-id"]])
+        self.assertEqual(production_planner_app.request_id_context.get(), "")
+
+    async def test_health_fails_when_solver_unavailable(self) -> None:
+        with patch.object(production_planner_app.production_planner_core, "linprog", None):
+            status, headers, body = await self.call_app("GET", "/api/health")
+        self.assertEqual(status, 503)
+        self.assertFalse(json.loads(body)["solverReady"])
+        self.assertIn("x-request-id", headers)
+
+    def test_sentry_scrubs_request_and_stack_locals(self) -> None:
+        event = {"request": {"data": "private"}, "user": {"id": "private"},
+                 "exception": {"values": [{"stacktrace": {"frames": [{"vars": {"payload": "private"}, "lineno": 4}]}}]}}
+        result = production_planner_app.scrub_sentry_event(event, {})
+        self.assertNotIn("private", json.dumps(result))
+        self.assertIn("lineno", json.dumps(result))
+
+    async def test_deployed_monitoring_probe_requires_auth_and_preserves_environment(self):
+        for environment in ("staging", "production"):
+            production_planner_app.app.settings = replace(self.original_settings, sentry_environment=environment,
+                sentry_dsn="https://public@example.invalid/1", monitoring_test_token="a" * 32)
+            production_planner_app.app.last_monitoring_test = float("-inf")
+            with patch.object(production_planner_app, "capture_exception") as capture, patch.object(production_planner_app.planner, "plan") as plan:
+                status, _, _ = await self.call_app("POST", "/api/monitoring-test")
+                self.assertEqual(status, 401)
+                capture.assert_not_called()
+                status, headers, body = await self.call_app("POST", "/api/monitoring-test", headers={"Authorization": "Bearer " + "a" * 32})
+                self.assertEqual(status, 500)
+                self.assertTrue(json.loads(body)["monitoringTest"])
+                self.assertEqual(json.loads(body)["environment"], environment)
+                self.assertIn("x-request-id", headers)
+                capture.assert_called_once()
+                self.assertIsInstance(capture.call_args.args[0], production_planner_app.MonitoringTestError)
+                plan.assert_not_called()
+                status, _, _ = await self.call_app("POST", "/api/monitoring-test", headers={"Authorization": "Bearer " + "a" * 32})
+                self.assertEqual(status, 429)
+                self.assertEqual(capture.call_count, 1)
+
+    async def test_monitoring_probe_real_sdk_tags_without_network(self):
+        import sentry_sdk
+        from sentry_sdk.transport import Transport
+        from sentry_sdk.integrations.logging import LoggingIntegration
+        events = []
+        class MemoryTransport(Transport):
+            def capture_envelope(self, envelope):
+                events.extend(item.get_event() for item in envelope.items if item.type == "event")
+        test_settings = replace(self.original_settings, sentry_environment="production", sentry_dsn="https://public@example.invalid/1", monitoring_test_token="a"*32)
+        production_planner_app.app.settings = test_settings
+        with patch.object(production_planner_app, "settings", test_settings), sentry_sdk.init(
+            dsn=test_settings.sentry_dsn, environment="production", release="probe-test",
+            transport=MemoryTransport, before_send=production_planner_app.scrub_sentry_event,
+            integrations=[LoggingIntegration(event_level=None)]):
+            status, headers, _ = await self.call_app("POST", "/api/monitoring-test", headers={"Authorization":"Bearer " + "a"*32})
+            sentry_sdk.flush()
+        self.assertEqual(status,500)
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]["tags"]["request_id"],headers["x-request-id"])
+        self.assertEqual(events[0]["tags"]["monitoring_test"],"true")
+        self.assertEqual(events[0]["environment"],"production")
+        self.assertNotIn("Bearer",json.dumps(events))
+
+    async def test_monitoring_probe_disabled_or_misconfigured(self):
+        for environment, token, dsn, expected in [("development", "a"*32, "set", 404), ("production", "", "set", 404), ("production", "a"*32, "", 503)]:
+            production_planner_app.app.settings = replace(self.original_settings, sentry_environment=environment, monitoring_test_token=token, sentry_dsn=dsn)
+            with patch.object(production_planner_app, "capture_exception") as capture:
+                status, _, _ = await self.call_app("POST", "/api/monitoring-test", headers={"Authorization":"Bearer " + "a"*32})
+                self.assertEqual(status, expected)
+                capture.assert_not_called()
+
     async def test_health_and_summary(self) -> None:
         status, headers, body = await self.call_app("GET", "/api/health")
         payload = json.loads(body)
@@ -101,6 +234,7 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body, b"")
         self.assertEqual(headers["access-control-allow-origin"], "https://planner.example")
         self.assertEqual(headers["access-control-allow-methods"], "GET,POST,OPTIONS")
+        self.assertIn("X-Request-ID", headers["access-control-expose-headers"])
 
         status, headers, _body = await self.call_app(
             "GET",

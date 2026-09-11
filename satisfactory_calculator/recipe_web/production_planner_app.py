@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import hmac
+import uuid
+from contextvars import ContextVar
 import json
 import logging
 import mimetypes
@@ -15,9 +19,11 @@ from typing import Any
 from urllib.parse import unquote
 
 from production_planner_core import DEFAULT_EXCEL_PATH, PlannerError, ProductionPlanner
+import production_planner_core
 
 try:
     import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
 except ImportError:  # pragma: no cover - Sentry is optional for local development.
     sentry_sdk = None
 
@@ -34,6 +40,7 @@ JsonDict = dict[str, Any]
 Scope = dict[str, Any]
 Receive = Any
 Send = Any
+request_id_context: ContextVar[str] = ContextVar("request_id", default="")
 
 
 @dataclass(frozen=True)
@@ -50,10 +57,12 @@ class PlannerAppSettings:
     sentry_environment: str
     sentry_release: str
     sentry_traces_sample_rate: float
+    monitoring_test_token: str = ""
 
     @classmethod
     def from_env(cls) -> "PlannerAppSettings":
         return cls(
+            monitoring_test_token=os.getenv("PLANNER_MONITORING_TEST_TOKEN", "").strip(),
             excel_path=Path(os.getenv("PLANNER_EXCEL_PATH", str(DEFAULT_EXCEL_PATH))).expanduser().resolve(),
             max_body_bytes=_env_int("PLANNER_MAX_BODY_BYTES", DEFAULT_MAX_BODY_BYTES, minimum=1024),
             plan_timeout_seconds=_env_float("PLANNER_PLAN_TIMEOUT_SECONDS", DEFAULT_PLAN_TIMEOUT_SECONDS, minimum=1.0),
@@ -206,6 +215,10 @@ class PlannerMetrics:
         }
 
 
+class MonitoringTestError(RuntimeError):
+    """An authenticated, deliberate production monitoring probe."""
+
+
 class ProductionPlannerApp:
     def __init__(
         self,
@@ -218,18 +231,38 @@ class ProductionPlannerApp:
         self.settings = app_settings
         self.cache = cache
         self.metrics = metrics
+        self.last_monitoring_test = float("-inf")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
             return
 
+        # Generate IDs here rather than trusting client-controlled log identifiers.
+        request_id = uuid.uuid4().hex
+        token = request_id_context.set(request_id)
+        original_send = send
+
+        async def correlated_send(message: JsonDict) -> None:
+            if message["type"] == "http.response.start":
+                message = {**message, "headers": [*message.get("headers", []),
+                    (b"x-request-id", request_id.encode("ascii")),
+                    (b"x-planner-release", self.settings.sentry_release.encode("ascii", errors="replace")),
+                    (b"x-planner-data-version", data_version.encode("ascii"))]}
+            await original_send(message)
+
+        send = correlated_send
         method = str(scope.get("method") or "GET").upper()
         path = unquote(str(scope.get("path") or "/"))
         started_at = time.perf_counter()
         status = 500
         origin = request_header(scope, "origin")
         self.metrics.record_request(path)
+        monitoring_test = False
         try:
+            if path == "/api/monitoring-test" and method == "POST":
+                self.authorize_monitoring_test(request_header(scope, "authorization"))
+                monitoring_test = True
+                raise MonitoringTestError("Planner backend monitoring test")
             if path.startswith("/api/"):
                 status = await self._handle_api(method, path, receive, send, origin)
             else:
@@ -242,37 +275,58 @@ class ProductionPlannerApp:
             await send_json(send, {"error": str(exc)}, status=status, headers=self.api_headers(origin))
         except Exception as exc:
             capture_exception(exc)
-            logger.exception("Unexpected request failure method=%s path=%s", method, path)
+            logger.exception("Unexpected request failure method=%s path=%s", method, path, extra={"monitoring_test": monitoring_test})
             status = 500
             await send_json(
                 send,
-                {"error": "Server error. Please try again later."},
+                {"error": "Intentional monitoring test." if monitoring_test else "Server error. Please try again later.", **({"monitoringTest": True, "environment": self.settings.sentry_environment} if monitoring_test else {})},
                 status=status,
                 headers=self.api_headers(origin),
             )
         finally:
             duration_ms = (time.perf_counter() - started_at) * 1000
             if path.startswith("/api/"):
-                logger.info("request method=%s path=%s status=%s duration_ms=%.1f", method, path, status, duration_ms)
+                logger.info("request", extra={"method": method, "path": path, "status": status, "duration_ms": round(duration_ms, 3), "monitoring_test": monitoring_test})
+            request_id_context.reset(token)
+
+    def authorize_monitoring_test(self, authorization: str) -> None:
+        token = self.settings.monitoring_test_token
+        if self.settings.sentry_environment not in {"staging", "production"} or len(token) < 32:
+            raise RequestError("Unknown API endpoint.", status=404)
+        supplied = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+        if not hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
+            raise RequestError("Unauthorized.", status=401)
+        if not self.settings.sentry_dsn or sentry_sdk is None:
+            raise RequestError("Sentry is not configured for this deployment.", status=503)
+        now = time.monotonic()
+        if now - self.last_monitoring_test < 30:
+            raise RequestError("Monitoring test cooldown: retry after 30 seconds.", status=429)
+        self.last_monitoring_test = now
 
     async def _handle_api(self, method: str, path: str, receive: Receive, send: Send, origin: str) -> int:
         if method == "OPTIONS":
             await send_empty(send, status=204, headers=self.api_headers(origin))
             return 204
         if method == "GET" and path == "/api/health":
+            ready = production_planner_core.linprog is not None and production_planner_core.milp is not None
             await send_json(
                 send,
                 {
-                    "ok": True,
+                    "ok": ready,
+                    "solverReady": ready,
+                    "environment": self.settings.sentry_environment,
+                    "release": self.settings.sentry_release,
+                    "dataVersion": data_version,
                     "uptimeSeconds": round(time.time() - app_started_at, 3),
                     "recipeCount": len(self.planner.recipes),
                     "itemCount": len(self.planner.items),
                     "maxConcurrentPlans": self.settings.max_concurrent_plans,
                     "planCache": self.cache.snapshot(),
                 },
+                status=200 if ready else 503,
                 headers=self.api_headers(origin),
             )
-            return 200
+            return 200 if ready else 503
         if method == "GET" and path == "/api/metrics":
             await send_json(
                 send,
@@ -350,8 +404,7 @@ class ProductionPlannerApp:
                 headers=self.api_headers(origin, {"Retry-After": "5"}),
             )
             return 503
-        except Exception as exc:
-            capture_exception(exc)
+        except Exception:
             plan_semaphore.release()
             duration_ms = (time.perf_counter() - started_at) * 1000
             self.metrics.record_plan_error(duration_ms)
@@ -499,6 +552,7 @@ def cors_headers(origin: str, allowed_origins: tuple[str, ...]) -> dict[str, str
         "Access-Control-Allow-Origin": allow_origin,
         "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Expose-Headers": "X-Request-ID,X-Planner-Release,X-Planner-Data-Version,Retry-After",
         "Access-Control-Max-Age": "86400",
     }
     if allow_origin != "*":
@@ -514,6 +568,7 @@ def static_file_path(path: str) -> Path | None:
         "/production_planner.css",
         "/production_planner.js",
         "/planner_config.js",
+        "/planner_diagnostics.js",
         "/robots.txt",
         "/sitemap.xml",
         "/ads.txt",
@@ -607,7 +662,10 @@ def security_headers() -> dict[str, str]:
 
 def _release_plan_slot_when_done(task: asyncio.Task[Any]) -> None:
     try:
-        task.exception()
+        exc = task.exception()
+        if exc is not None and not isinstance(exc, PlannerError):
+            capture_exception(exc)
+            logger.error("plan failed after timeout", exc_info=(type(exc), exc, exc.__traceback__))
     except asyncio.CancelledError:
         pass
     finally:
@@ -650,12 +708,45 @@ def configure_sentry(app_settings: PlannerAppSettings) -> None:
         environment=app_settings.sentry_environment or None,
         release=app_settings.sentry_release or None,
         traces_sample_rate=app_settings.sentry_traces_sample_rate,
+        integrations=[LoggingIntegration(event_level=None)],
+        send_default_pii=False,
+        before_send=scrub_sentry_event,
     )
 
 
 def capture_exception(exc: BaseException) -> None:
-    if sentry_sdk is not None:
-        sentry_sdk.capture_exception(exc)
+    if sentry_sdk is not None and settings.sentry_dsn:
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("request_id", request_id_context.get())
+            scope.set_tag("data_version", data_version)
+            if isinstance(exc, MonitoringTestError):
+                scope.set_tag("monitoring_test", "true")
+                scope.fingerprint = ["planner-monitoring-test", "backend"]
+            sentry_sdk.capture_exception(exc)
+
+
+def scrub_sentry_event(event: JsonDict, hint: JsonDict) -> JsonDict:
+    # Plan contents are shared explicitly through feedback, never as stack locals.
+    event.pop("request", None)
+    event.pop("user", None)
+    for value in event.get("exception", {}).get("values", []):
+        for frame in value.get("stacktrace", {}).get("frames", []):
+            frame.pop("vars", None)
+    return event
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {"severity": record.levelname, "message": record.getMessage(),
+                   "logger": record.name, "request_id": request_id_context.get(),
+                   "release": os.getenv("SENTRY_RELEASE", ""),
+                   "environment": os.getenv("SENTRY_ENVIRONMENT", "production")}
+        for key in ("method", "path", "status", "duration_ms", "monitoring_test"):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def configure_logging() -> None:
@@ -665,17 +756,20 @@ def configure_logging() -> None:
         level=level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(JsonLogFormatter())
     log_file = os.getenv("PLANNER_LOG_FILE", "").strip()
     if log_file:
         Path(log_file).expanduser().parent.mkdir(parents=True, exist_ok=True)
         handler = RotatingFileHandler(log_file, maxBytes=5_000_000, backupCount=5, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        handler.setFormatter(JsonLogFormatter())
         handler.setLevel(level)
         logger.addHandler(handler)
 
 
 configure_logging()
 settings = PlannerAppSettings.from_env()
+data_version = hashlib.sha256(settings.excel_path.read_bytes()).hexdigest()[:16]
 configure_sentry(settings)
 planner = ProductionPlanner.from_excel(settings.excel_path)
 plan_semaphore = asyncio.Semaphore(settings.max_concurrent_plans)

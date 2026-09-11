@@ -44,6 +44,7 @@ def main() -> None:
 def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str, str]:
     assets = {
         "production_planner.css": (SOURCE_DIR / "production_planner.css").read_bytes(),
+        "planner_diagnostics.js": (SOURCE_DIR / "planner_diagnostics.js").read_bytes(),
         "production_planner.js": (SOURCE_DIR / "production_planner.js").read_bytes(),
         "planner_config.js": render_planner_config(config).encode("utf-8"),
     }
@@ -164,7 +165,9 @@ def content_security_policy(config: dict[str, object]) -> str:
     if sentry_script_origin:
         script_src.append(sentry_script_origin)
     if config["sentryDsn"]:
-        connect_src.extend(["https://*.ingest.sentry.io", "https://*.ingest.us.sentry.io"])
+        sentry_origin = origin_from_url(str(config["sentryDsn"]))
+        if sentry_origin:
+            connect_src.append(sentry_origin)
 
     if config["adsenseEnabled"] and config["adsenseClient"]:
         script_src.extend(
@@ -282,7 +285,7 @@ def origin_from_url(value: str) -> str:
     parsed = urlparse(value)
     if not parsed.scheme or not parsed.netloc:
         return ""
-    return f"{parsed.scheme}://{parsed.netloc}"
+    return f"{parsed.scheme}://{parsed.netloc.rsplit(chr(64), 1)[-1]}"
 
 
 def dedupe(values: list[str]) -> list[str]:
