@@ -10,7 +10,7 @@
 
 在 staging 测试时事件仍标记 staging，在 production 测试时仍标记 production。不会把生产错误转发到本地，也不会换成测试 DSN。两端都使用该部署实际的 DSN、release、网络和告警配置，测试事件额外带 `monitoring_test=true`。
 
-本次只重做 BUG 验收入口。测试通过后的一键晋级、前后端同版本发布、环境隔离部署，属于下一项发布流程改造；当前两个部署工作流仍写死 production，不能把 staging 分支直接当作已隔离的发布测试环境。部署 staging 时需要实际使用独立后端、前端 API 地址和 `SENTRY_ENVIRONMENT=staging`，并配置对应的 DSN。代码已支持这两个部署环境，但不代表云端资源已经创建。
+环境隔离和人工晋级由 `.github/workflows/release.yml` 统一处理，配置与操作步骤见 [RELEASE.md](RELEASE.md)。GitHub Environments 分别提供 staging / production 配置；不是仅凭 staging 分支名称切换环境。云端配置完成并启用流水线后，合入 main 的候选版本先去发布测试站，人工批准后才发布生产。
 
 ## 已保留的问题定位能力
 
@@ -66,7 +66,7 @@ https://你的生产域名/?monitoring_test=frontend
 
 在待验收后端设置 `PLANNER_MONITORING_TEST_TOKEN`，使用至少 32 字符的随机令牌。staging 和 production 使用各自独立的令牌。可以用密码管理器生成；保存在服务端环境/Secret Manager 与你的密码管理器中，不放在前端、URL 或代码仓库。
 
-现有 GitHub 后端部署工作流已增加同名 Secret 的传递。令牌为空或不足 32 字符时，测试 API 不启用；不影响正常计算。实际 Sentry DSN 和 SDK 缺失时测试返回 503，并指出配置问题。
+GitHub 的 staging / production Environments 分别配置同名 Secret，由统一发布工作流传入后端。令牌为空或不足 32 字符时，测试 API 不启用；不影响正常计算。实际 Sentry DSN 和 SDK 缺失时测试返回 503，并指出配置问题。
 
 ### API
 

@@ -1,0 +1,177 @@
+name: Release planner
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+# Freeze the one staging site while its candidate awaits the owner's decision.
+# Reject/cancel a candidate to allow the next queued main update to reach staging.
+concurrency:
+  group: planner-release-candidate
+  cancel-in-progress: false
+env:
+  RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+  staging:
+    needs: checks
+    if: vars.RELEASE_PIPELINE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ vars.PUBLIC_SITE_URL }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOY_ENVIRONMENT: staging
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PLANNER_API_BASE_URL: ${{ vars.PLANNER_API_BASE_URL }}
+      SENTRY_FRONTEND_DSN: ${{ vars.SENTRY_FRONTEND_DSN }}
+      SENTRY_BROWSER_SCRIPT_URL: ${{ vars.SENTRY_BROWSER_SCRIPT_URL }}
+      ALLOW_UNMANAGED_BASELINE: ${{ vars.ALLOW_UNMANAGED_BASELINE }}
+      CLOUD_RUN_MAX_INSTANCES: ${{ vars.CLOUD_RUN_MAX_INSTANCES }}
+      ADSENSE_ENABLED: ${{ vars.ADSENSE_ENABLED }}
+      ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      PLANNER_MONITORING_TEST_TOKEN: ${{ secrets.PLANNER_MONITORING_TEST_TOKEN }}
+      IMAGE_TAG: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/planner:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-setup
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Validate environment configuration
+        run: python scripts/release.py validate
+      - name: Validate registry
+        env:
+          REGISTRY_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}
+        run: test -n "$REGISTRY_REPOSITORY"
+      - name: Authenticate Docker
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the backend once
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_TAG }}
+      - name: Record immutable candidate
+        env:
+          CANDIDATE_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/planner@${{ steps.image.outputs.digest }}
+        run: python scripts/release.py candidate
+      - name: Prepare staging and capture recovery snapshot
+        run: python scripts/release.py prepare
+      - name: Preserve staging snapshot before cloud mutations
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-staging-${{ env.RELEASE_ID }}
+          path: release-work/transaction.json
+          retention-days: 90
+      - name: Deploy and test staging
+        run: python scripts/release.py deploy
+      - name: Publish tested candidate for production approval
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ env.RELEASE_ID }}
+          path: release-work/candidate.json
+          retention-days: 90
+      - name: Preserve staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-${{ env.RELEASE_ID }}
+          path: |
+            release-work/
+            dist/frontend/
+            playwright-report/
+            test-results/
+          retention-days: 90
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ vars.PUBLIC_SITE_URL }}
+    concurrency:
+      group: planner-production-mutation
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      DEPLOY_ENVIRONMENT: production
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PLANNER_API_BASE_URL: ${{ vars.PLANNER_API_BASE_URL }}
+      SENTRY_FRONTEND_DSN: ${{ vars.SENTRY_FRONTEND_DSN }}
+      SENTRY_BROWSER_SCRIPT_URL: ${{ vars.SENTRY_BROWSER_SCRIPT_URL }}
+      ALLOW_UNMANAGED_BASELINE: ${{ vars.ALLOW_UNMANAGED_BASELINE }}
+      CLOUD_RUN_MAX_INSTANCES: ${{ vars.CLOUD_RUN_MAX_INSTANCES }}
+      ADSENSE_ENABLED: ${{ vars.ADSENSE_ENABLED }}
+      ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      PLANNER_MONITORING_TEST_TOKEN: ${{ secrets.PLANNER_MONITORING_TEST_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-setup
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Validate environment configuration
+        run: python scripts/release.py validate
+      - name: Fetch the exact candidate tested in this run
+        uses: actions/download-artifact@v4
+        with:
+          name: candidate-${{ env.RELEASE_ID }}
+          path: release-work/
+      - name: Verify candidate and capture production recovery snapshot
+        run: python scripts/release.py prepare
+      - name: Preserve production snapshot before cloud mutations
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-production-${{ env.RELEASE_ID }}
+          path: release-work/transaction.json
+          retention-days: 90
+      - name: Promote tested image and check production; restore on failure
+        run: python scripts/release.py deploy
+      - name: Archive successful production version for long-term rollback
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python -c 'from pathlib import Path; import shutil; shutil.copyfile("release-work/transaction.json", "release-work/production.json"); Path("release-work/notes.md").write_text("Production API and browser checks passed. The attached production.json records the matching frontend deployment and backend revision for rollback.")'
+          gh release create "planner-$RELEASE_ID" release-work/production.json --target "$GITHUB_SHA" --title "Planner $RELEASE_ID" --notes-file release-work/notes.md
+      - name: Preserve production release and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-${{ env.RELEASE_ID }}
+          path: |
+            release-work/
+            dist/frontend/
+            playwright-report/
+            test-results/
+          retention-days: 90

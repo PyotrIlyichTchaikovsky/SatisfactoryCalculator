@@ -1,0 +1,28 @@
+name: Release tools
+description: Install pinned tools and authenticate using the selected environment identity
+inputs:
+  workload_identity_provider:
+    required: true
+    description: Google workload identity provider
+  service_account:
+    required: true
+    description: Google deployment service account
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - uses: pnpm/action-setup@v4
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+      shell: bash
+    - run: pnpm exec playwright install --with-deps chromium
+      shell: bash
+    - uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ inputs.workload_identity_provider }}
+        service_account: ${{ inputs.service_account }}
+    - uses: google-github-actions/setup-gcloud@v2

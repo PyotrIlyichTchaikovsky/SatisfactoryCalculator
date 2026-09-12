@@ -15,6 +15,24 @@ SOURCE_DIR = ROOT_DIR / "satisfactory_calculator" / "recipe_web"
 OUTPUT_DIR = ROOT_DIR / "dist" / "frontend"
 
 
+def application_digest() -> str:
+    files = [SOURCE_DIR / name for name in ("production_planner.html", "production_planner.css", "production_planner.js", "planner_diagnostics.js", "data/Data.xlsx")]
+    files += sorted((SOURCE_DIR / "data" / "icons").rglob("*.png"))
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.relative_to(SOURCE_DIR).as_posix().encode())
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def release_manifest(config: dict[str, object]) -> dict[str, object]:
+    return {"schema": 1, "sha": config["sentryRelease"],
+            "environment": config["sentryEnvironment"], "releaseId": env("RELEASE_ID"),
+            "apiBaseUrl": config["apiBaseUrl"], "applicationDigest": application_digest(),
+            "dataVersion": hashlib.sha256((SOURCE_DIR / "data" / "Data.xlsx").read_bytes()).hexdigest()[:16],
+            "configDigest": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()}
+
+
 def main() -> None:
     output_dir = Path(os.getenv("FRONTEND_OUTPUT_DIR", str(OUTPUT_DIR))).resolve()
     if output_dir == ROOT_DIR or output_dir == SOURCE_DIR or SOURCE_DIR.is_relative_to(output_dir):
@@ -31,13 +49,16 @@ def main() -> None:
     (output_dir / "index.html").write_text(html, encoding="utf-8")
     (output_dir / "production_planner.html").write_text(html, encoding="utf-8")
     (output_dir / "_headers").write_text(render_headers(config), encoding="utf-8")
-    (output_dir / "robots.txt").write_text(render_robots(config["publicSiteUrl"]), encoding="utf-8")
-    (output_dir / "sitemap.xml").write_text(render_sitemap(config["publicSiteUrl"]), encoding="utf-8")
+    is_staging = config["sentryEnvironment"] == "staging"
+    (output_dir / "robots.txt").write_text("User-agent: *\nDisallow: /\n" if is_staging else render_robots(config["publicSiteUrl"]), encoding="utf-8")
+    (output_dir / "sitemap.xml").write_text(render_sitemap("" if is_staging else config["publicSiteUrl"]), encoding="utf-8")
 
     ads_txt = render_ads_txt(config["adsenseClient"])
     if ads_txt:
         (output_dir / "ads.txt").write_text(ads_txt, encoding="utf-8")
 
+    manifest = release_manifest(config)
+    (output_dir / "release.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"Built frontend into {output_dir}")
 
 
@@ -101,6 +122,12 @@ def render_html(source_path: Path, config: dict[str, object], asset_names: dict[
             f'  <link rel="canonical" href="{escape_attr(public_site_url)}/">',
         )
 
+    label = "Release test environment" if config["sentryEnvironment"] == "staging" else "Version"
+    if config["sentryRelease"]:
+        version = escape_attr(str(config["sentryRelease"])[:12])
+        html = html.replace('<p id="dataSummary">', f'<p id="releaseLabel">{label}: {version}</p>\n      <p id="dataSummary">', 1)
+    if config["sentryEnvironment"] == "staging":
+        html = html.replace("</head>", '  <meta name="robots" content="noindex, nofollow">\n</head>', 1)
     if injections:
         marker = '  <script defer src="planner_config.js'
         html = html.replace(marker, "\n".join(injections) + "\n" + marker, 1)
@@ -128,8 +155,12 @@ def render_headers(config: dict[str, object]) -> str:
             "  Referrer-Policy: strict-origin-when-cross-origin",
             "  X-Frame-Options: DENY",
             f"  Content-Security-Policy: {csp}",
+            *( ["  X-Robots-Tag: noindex, nofollow"] if config["sentryEnvironment"] == "staging" else [] ),
             "",
             "/",
+            "  Cache-Control: no-store, max-age=0",
+            "",
+            "/release.json",
             "  Cache-Control: no-store, max-age=0",
             "",
             "/index.html",

@@ -10,3 +10,9 @@ __pycache__
 *.pyo
 *.pyd
 *.log
+node_modules
+playwright-report
+test-results
+release-work
+.wrangler
+gha-creds-*.json

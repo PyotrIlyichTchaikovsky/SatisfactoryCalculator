@@ -126,3 +126,9 @@ metrics, and plan caching.
 Use **Report a problem** in the planner to review and copy/download a diagnostic report.
 See [monitoring setup and acceptance checks](deploy/MONITORING.md) for request IDs,
 Sentry, persistent Cloud Logging metrics and real calculation checks.
+
+## Controlled releases
+
+See [release setup and operator steps](deploy/RELEASE.md). Merges to main run checks;
+cloud deployments remain disabled until `RELEASE_PIPELINE_ENABLED=true` is configured.
+Staging passes automated API/browser tests before the production approval gate.

@@ -1,0 +1,1 @@
+{"name":"satisfactory-planner-release-tools","private":true,"version":"1.0.0","packageManager":"pnpm@11.19.0","scripts":{"test:e2e":"playwright test"},"devDependencies":{"@playwright/test":"1.63.0","wrangler":"4.131.1"}}

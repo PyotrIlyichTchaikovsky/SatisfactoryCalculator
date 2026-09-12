@@ -1,0 +1,85 @@
+name: Roll back production
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Release ID shown by Actions (run-id-attempt, e.g. 12345678-1)
+        required: true
+        type: string
+      target:
+        description: after = that successful version; before = snapshot preceding that attempt
+        required: true
+        default: after
+        type: choice
+        options: [after, before]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: planner-production-mutation
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      DEPLOY_ENVIRONMENT: production
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PLANNER_API_BASE_URL: ${{ vars.PLANNER_API_BASE_URL }}
+      SENTRY_FRONTEND_DSN: ${{ vars.SENTRY_FRONTEND_DSN }}
+      SENTRY_BROWSER_SCRIPT_URL: ${{ vars.SENTRY_BROWSER_SCRIPT_URL }}
+      ALLOW_UNMANAGED_BASELINE: ${{ vars.ALLOW_UNMANAGED_BASELINE }}
+      CLOUD_RUN_MAX_INSTANCES: ${{ vars.CLOUD_RUN_MAX_INSTANCES }}
+      ADSENSE_ENABLED: ${{ vars.ADSENSE_ENABLED }}
+      ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      PLANNER_MONITORING_TEST_TOKEN: ${{ secrets.PLANNER_MONITORING_TEST_TOKEN }}
+      TARGET_RELEASE: ${{ inputs.release_id }}
+      TARGET_SIDE: ${{ inputs.target }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-setup
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Validate environment configuration
+        run: python scripts/release.py validate
+      - name: Validate source workflow and fetch recovery record
+        shell: bash
+        run: |
+          [[ "$TARGET_RELEASE" =~ ^[0-9]+-[0-9]+$ ]] || exit 1
+          RUN_ID="${TARGET_RELEASE%-*}"
+          export SOURCE_RUN_ID="$RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > source-run.json
+          python -c 'import json; r=json.load(open("source-run.json")); assert r["path"]==".github/workflows/release.yml" and r["head_branch"]=="main" and r["event"] in ("push","workflow_dispatch")'
+          if [ "$TARGET_SIDE" = before ]; then
+            gh run download "$RUN_ID" --name "recovery-production-$TARGET_RELEASE" --dir recovery-input
+            echo 'TARGET_STATE=recovery-input/transaction.json' >> "$GITHUB_ENV"
+          else
+            gh release download "planner-$TARGET_RELEASE" --pattern production.json --dir recovery-input
+            echo 'TARGET_STATE=recovery-input/production.json' >> "$GITHUB_ENV"
+          fi
+      - name: Restore matching frontend and backend and verify
+        run: python scripts/release.py rollback --state "$TARGET_STATE" --target "$TARGET_SIDE"
+      - name: Preserve rollback result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-work/
+          retention-days: 90

@@ -1,0 +1,117 @@
+from __future__ import annotations
+import copy
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch, Mock
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"scripts"))
+import release
+
+
+class ReleaseTransactionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.work = Path(self.temp.name)
+        self.work_patch = patch.object(release,"WORK",self.work)
+        self.work_patch.start()
+        self.env = {"DEPLOY_ENVIRONMENT":"production", "GCP_PROJECT_ID":"project", "GCP_REGION":"asia-east1",
+            "CLOUD_RUN_SERVICE":"planner-prod", "CLOUDFLARE_ACCOUNT_ID":"account", "CLOUDFLARE_PAGES_PROJECT":"planner-prod",
+            "CLOUDFLARE_API_TOKEN":"secret-value", "PUBLIC_SITE_URL":"https://prod.example", "PLANNER_API_BASE_URL":"https://api.example",
+            "SENTRY_DSN":"https://public@example.invalid/1", "SENTRY_FRONTEND_DSN":"https://public@example.invalid/2",
+            "SENTRY_BROWSER_SCRIPT_URL":"https://cdn.example/sdk.js", "PLANNER_MONITORING_TEST_TOKEN":"x"*32}
+        self.env_patch = patch.dict(os.environ,self.env,clear=True)
+        self.env_patch.start()
+        self.config = release.Config()
+        self.stage = dict(self.config.identity(),CLOUD_RUN_SERVICE="planner-stage",CLOUDFLARE_PAGES_PROJECT="planner-stage",PUBLIC_SITE_URL="https://stage.example",PLANNER_API_BASE_URL="https://stage-api.example")
+        self.candidate = {"schema":1,"sha":"a"*40,"releaseId":"123-1","image":"asia-east1-docker.pkg.dev/project/images/planner@sha256:"+"b"*64,
+                          "applicationDigest":"c"*64,"dataVersion":"d"*16,"stagingPassed":True,"stagingIdentity":self.stage}
+        self.old = {"traffic":{"old-revision":100},"frontendDeployment":"old-pages","manifest":None}
+        self.state = {"schema":1,"environment":"production","identity":self.config.identity(),"before":self.old,
+                      "candidate":self.candidate,"manifest":dict(self.candidate,environment="production"),"status":"prepared"}
+
+    def tearDown(self):
+        self.env_patch.stop()
+        self.work_patch.stop()
+        self.temp.cleanup()
+
+    def cloud(self):
+        cloud=Mock()
+        cloud.snapshot.return_value=copy.deepcopy(self.old)
+        cloud.stage_backend.return_value=("new-revision","https://candidate.example")
+        cloud.publish_frontend.return_value="new-pages"
+        return cloud
+
+    def test_production_rejects_mutable_image_and_environment_reuse(self):
+        with patch.object(release.build_frontend,"application_digest",return_value="c"*64):
+            release.validate_candidate(self.candidate,self.config)
+            for bad in (dict(self.candidate,image="registry/image:latest"),dict(self.candidate,stagingPassed=False),dict(self.candidate,stagingIdentity=self.config.identity())):
+                with self.assertRaises(release.ReleaseError):
+                    release.validate_candidate(bad,self.config)
+
+    def test_stale_staging_candidate_never_touches_production(self):
+        cloud=self.cloud()
+        with patch.object(release.build_frontend,"application_digest",return_value="c"*64), patch.object(release,"get_json",return_value=dict(self.candidate,sha="f"*40,environment="staging")):
+            with self.assertRaises(release.ReleaseError): release.prepare(self.config,cloud,self.candidate)
+        cloud.snapshot.assert_not_called()
+        cloud.stage_backend.assert_not_called()
+
+    def test_provider_drift_aborts_before_any_mutation(self):
+        cloud=self.cloud(); cloud.snapshot.return_value=dict(self.old,frontendDeployment="outside-deploy")
+        with self.assertRaises(release.ReleaseError): release.deploy(self.config,cloud,self.state)
+        cloud.stage_backend.assert_not_called(); cloud.restore.assert_not_called()
+
+    def test_recovery_snapshot_exists_before_first_mutation(self):
+        cloud=self.cloud()
+        def stage(*args):
+            saved=release.read_json(self.work/"transaction.json")
+            self.assertEqual(saved["before"],self.old)
+            self.assertEqual(saved["status"],"deploying")
+            return "new-revision","https://candidate.example"
+        cloud.stage_backend.side_effect=stage
+        with patch.object(release,"check_api"),patch.object(release,"check_live"):
+            release.deploy(self.config,cloud,self.state)
+        saved=release.read_json(self.work/"transaction.json")
+        self.assertEqual(saved["status"],"success")
+        self.assertEqual(saved["after"]["traffic"],{"new-revision":100})
+        self.assertNotIn("secret-value",json.dumps(saved))
+
+    def test_post_deploy_failure_restores_pair_and_remains_a_failed_release(self):
+        cloud=self.cloud()
+        with patch.object(release,"check_api"),patch.object(release,"check_live",side_effect=release.ReleaseError("page regression")):
+            with self.assertRaisesRegex(release.ReleaseError,"rolled_back"):
+                release.deploy(self.config,cloud,self.state)
+        cloud.restore.assert_called_once_with(self.old)
+        self.assertEqual(release.read_json(self.work/"transaction.json")["status"],"rolled_back")
+
+    def test_failed_first_release_never_claims_successful_rollback(self):
+        cloud=self.cloud(); empty={"traffic":{},"frontendDeployment":None,"manifest":None}
+        self.state["before"]=empty; cloud.snapshot.return_value=empty
+        cloud.stage_backend.side_effect=release.ReleaseError("build not ready")
+        cloud.restore.side_effect=release.ReleaseError("no previous version")
+        with self.assertRaisesRegex(release.ReleaseError,"recovery_required"):
+            release.deploy(self.config,cloud,self.state)
+
+    def test_restore_attempts_backend_even_if_frontend_provider_fails(self):
+        cloud=release.Cloud(self.config)
+        with patch.object(cloud,"cf",side_effect=release.ReleaseError("provider down")),patch.object(cloud,"set_traffic") as traffic:
+            with self.assertRaises(release.ReleaseError): cloud.restore(self.old)
+        traffic.assert_called_once_with(self.old["traffic"])
+
+    def test_manual_rollback_rejects_failed_or_foreign_target(self):
+        cloud=self.cloud()
+        for bad in (dict(self.state,status="failed",after=self.old),dict(self.state,status="success",after=self.old,identity=self.stage)):
+            with self.assertRaises(release.ReleaseError): release.rollback(self.config,cloud,bad,"after")
+        cloud.restore.assert_not_called()
+
+    def test_checks_detect_wrong_environment_and_target_quantities(self):
+        with patch.object(release,"get_json",return_value={"ok":True,"solverReady":True,"environment":"staging"}):
+            with self.assertRaisesRegex(release.ReleaseError,"environment mismatch"):
+                release.check_api("https://api.example","production")
+
+    def test_https_configuration_validation(self):
+        for invalid in ("http://api.example","https://user:secret@api.example","https://api.example/path","https://api.example?token=secret"):
+            with patch.dict(os.environ,PLANNER_API_BASE_URL=invalid):
+                with self.assertRaises(release.ReleaseError): release.Config()

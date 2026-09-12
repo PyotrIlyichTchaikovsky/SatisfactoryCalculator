@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import build_frontend
@@ -17,3 +18,24 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
     def test_diagnostics_asset_precedes_planner(self):
         html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
         self.assertLess(html.index('src="planner_diagnostics.js'), html.index('src="production_planner.js'))
+
+
+class ReleaseFrontendTests(unittest.TestCase):
+    def test_staging_html_and_headers_are_labeled_and_not_indexed(self):
+        with patch.dict(build_frontend.os.environ, {"SENTRY_ENVIRONMENT":"staging", "SENTRY_RELEASE":"a"*40}, clear=True):
+            config=build_frontend.frontend_config()
+        html=build_frontend.render_html(build_frontend.SOURCE_DIR/"production_planner.html",config,{})
+        self.assertIn("Release test environment",html)
+        self.assertIn('name="robots" content="noindex, nofollow"',html)
+        headers=build_frontend.render_headers(config)
+        self.assertIn("X-Robots-Tag: noindex",headers)
+        self.assertIn("/release.json",headers)
+
+    def test_environment_config_changes_do_not_change_application_identity(self):
+        with patch.dict(build_frontend.os.environ, {"SENTRY_ENVIRONMENT":"staging", "PLANNER_API_BASE_URL":"https://stage.example", "SENTRY_RELEASE":"a"*40}, clear=True):
+            first=build_frontend.release_manifest(build_frontend.frontend_config())
+        with patch.dict(build_frontend.os.environ, {"SENTRY_ENVIRONMENT":"production", "PLANNER_API_BASE_URL":"https://prod.example", "SENTRY_RELEASE":"a"*40}, clear=True):
+            second=build_frontend.release_manifest(build_frontend.frontend_config())
+        self.assertEqual(first["applicationDigest"],second["applicationDigest"])
+        self.assertEqual(first["dataVersion"],second["dataVersion"])
+        self.assertNotEqual(first["configDigest"],second["configDigest"])
