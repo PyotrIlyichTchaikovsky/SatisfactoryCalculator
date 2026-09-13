@@ -7,8 +7,9 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   page.on('requestfailed',req=>{
     if(['script','stylesheet','image','fetch','xhr'].includes(req.resourceType())) failures.push(req.url()+': '+req.failure()?.errorText);
   });
+  const plannerApiPaths=new Set(['/api/summary','/api/materials','/api/recipes','/api/plan']);
   const apiRequests=[];
-  page.on('request',req=>{if(new URL(req.url()).pathname.startsWith('/api/')) apiRequests.push(req.url());});
+  page.on('request',req=>{if(plannerApiPaths.has(new URL(req.url()).pathname)) apiRequests.push(req.url());});
   const response=await page.goto('/');
   expect(response.ok()).toBeTruthy();
   await expect(page.locator('#dataSummary')).toContainText('recipes');
