@@ -268,14 +268,14 @@ def check_api_until_ready(base_url, environment, sha=None, data_version=None, le
 
 def check_live(config, expected, browser=True):
     # Only retry transient API/metadata propagation; a browser regression fails immediately.
-    for attempt in range(5):
+    for attempt in range(20):
         try:
             check_api_until_ready(config["PLANNER_API_BASE_URL"], config.environment, expected.get("sha") if expected else None, expected.get("dataVersion") if expected else None, legacy=expected is None, attempts=1)
             if expected:
                 verify_manifest(get_json(config["PUBLIC_SITE_URL"] + "/release.json"), expected, config.environment)
             break
         except Exception:
-            if attempt == 4:
+            if attempt == 19:
                 raise
             time.sleep(3)
     if browser:

@@ -22,7 +22,18 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
     },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate release'}).toBe(expectedSha);
     manifest=await (await request.get(manifestUrl,{headers:{'Cache-Control':'no-cache'}})).json();
   }
-  const response=await page.goto(expectedSha ? `/?release=${encodeURIComponent(expectedSha)}` : '/');
+  await page.setExtraHTTPHeaders({'Cache-Control':'no-cache','Pragma':'no-cache'});
+  let response;
+  if(!legacy && expectedSha) {
+    const expectedLabel=`Release test environment: ${expectedSha.slice(0,12)}`;
+    await expect.poll(async()=>{
+      response=await page.goto(`/?release=${encodeURIComponent(expectedSha)}&attempt=${Date.now()}`,{waitUntil:'domcontentloaded'});
+      if(!response?.ok()) return '';
+      return await page.locator('#releaseLabel').textContent().catch(()=> '');
+    },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate HTML'}).toBe(expectedLabel);
+  } else {
+    response=await page.goto('/');
+  }
   expect(response.ok()).toBeTruthy();
   await expect(page.locator('#dataSummary')).toContainText('recipes');
   if(expectedSha) expect(manifest.sha).toBe(expectedSha);
