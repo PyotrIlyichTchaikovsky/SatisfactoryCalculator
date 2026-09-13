@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import gzip
 import hashlib
 import hmac
 import uuid
@@ -41,6 +42,7 @@ Scope = dict[str, Any]
 Receive = Any
 Send = Any
 request_id_context: ContextVar[str] = ContextVar("request_id", default="")
+gzip_response_context: ContextVar[bool] = ContextVar("gzip_response", default=False)
 
 
 @dataclass(frozen=True)
@@ -240,6 +242,7 @@ class ProductionPlannerApp:
         # Generate IDs here rather than trusting client-controlled log identifiers.
         request_id = uuid.uuid4().hex
         token = request_id_context.set(request_id)
+        gzip_token = gzip_response_context.set("gzip" in request_header(scope, "accept-encoding").lower())
         original_send = send
 
         async def correlated_send(message: JsonDict) -> None:
@@ -287,6 +290,7 @@ class ProductionPlannerApp:
             duration_ms = (time.perf_counter() - started_at) * 1000
             if path.startswith("/api/"):
                 logger.info("request", extra={"method": method, "path": path, "status": status, "duration_ms": round(duration_ms, 3), "monitoring_test": monitoring_test})
+            gzip_response_context.reset(gzip_token)
             request_id_context.reset(token)
 
     def authorize_monitoring_test(self, authorization: str) -> None:
@@ -471,13 +475,22 @@ async def read_request_body(receive: Receive, max_bytes: int) -> bytes:
 
 async def send_json(send: Send, payload: JsonDict, status: int = 200, headers: dict[str, str] | None = None) -> None:
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    response_headers = dict(headers or {})
+    if len(encoded) >= 1024:
+        vary = [value.strip() for value in response_headers.get("Vary", "").split(",") if value.strip()]
+        if "Accept-Encoding" not in vary:
+            vary.append("Accept-Encoding")
+        response_headers["Vary"] = ", ".join(vary)
+        if gzip_response_context.get():
+            encoded = gzip.compress(encoded, compresslevel=6)
+            response_headers["Content-Encoding"] = "gzip"
     await send_response(
         send,
         encoded,
         status=status,
         content_type="application/json; charset=utf-8",
         cache_control="no-store, max-age=0",
-        headers=headers,
+        headers=response_headers,
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import gzip
 import json
 import asyncio
 import logging
@@ -84,6 +85,19 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(len(value) == 32 for value in ids))
         self.assertEqual(production_planner_app.request_id_context.get(), "")
         self.assertTrue(all("x-planner-data-version" in headers for _, headers, _ in responses))
+
+    async def test_large_json_responses_support_gzip(self) -> None:
+        status, headers, body = await self.call_app(
+            "GET",
+            "/api/recipes",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-encoding"], "gzip")
+        self.assertIn("Accept-Encoding", headers["vary"])
+        self.assertEqual(int(headers["content-length"]), len(body))
+        payload = json.loads(gzip.decompress(body))
+        self.assertEqual(len(payload["selectableRecipeIds"]), len(production_planner_app.planner.selectable_recipe_ids))
 
     async def test_error_response_id_matches_capture_and_log(self) -> None:
         captured = []

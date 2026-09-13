@@ -9,6 +9,7 @@
   const historyPlanSelect = document.getElementById("historyPlanSelect");
   const recipeFilterButton = document.getElementById("recipeFilterButton");
   const plannerForm = document.getElementById("plannerForm");
+  const calculateButton = document.getElementById("calculateButton");
   const dataSummary = document.getElementById("dataSummary");
   const statusMessage = document.getElementById("statusMessage");
   const treeView = document.getElementById("treeView");
@@ -28,6 +29,7 @@
   const recipeModeInputs = [];
 
   let items = [];
+  let plannerReady = false;
   let recipeCatalog = { materials: [], defaultEnabledRecipeIds: [], selectableRecipeIds: [] };
   const itemsByClass = new Map();
   const selectedRecipeIds = new Set();
@@ -90,20 +92,28 @@
   loadInitialData();
 
   async function loadInitialData() {
+    const supportingData = Promise.all([
+      fetchJson("/api/summary"),
+      fetchJson("/api/recipes"),
+    ]);
+    supportingData.catch(() => undefined);
     try {
-      const [summary, itemPayload, recipePayload] = await Promise.all([
-        fetchJson("/api/summary"),
-        fetchJson("/api/materials"),
-        fetchJson("/api/recipes"),
-      ]);
+      const itemPayload = await fetchJson("/api/materials");
       items = Array.isArray(itemPayload.items) ? itemPayload.items : [];
       itemsByClass.clear();
       items.forEach((item) => itemsByClass.set(item.className, item));
-      initializeRecipeSelection(recipePayload);
       if (!restoreTargetRows(savedState.targets)) {
         addTargetRow(null, "", { focus: false, save: false });
       }
       renderTargetPlanSelectors();
+      dataSummary.textContent = `${formatInteger(items.length)} items ready · Loading recipe catalog...`;
+      setStatus("Items are ready. You can select targets while the recipe catalog finishes loading.", false);
+
+      const [summary, recipePayload] = await supportingData;
+      initializeRecipeSelection(recipePayload);
+      plannerReady = true;
+      if (recipeFilterButton) recipeFilterButton.disabled = false;
+      if (calculateButton) calculateButton.disabled = false;
       activatePlanCacheForCurrentTargets();
       window.PlannerDiagnostics.setDataSummary(summary);
       dataSummary.textContent = summaryText(summary);
@@ -120,6 +130,10 @@
   }
 
   async function calculate(options = {}) {
+    if (!plannerReady) {
+      setStatus("The recipe catalog is still loading. Please wait a moment before calculating.", false);
+      return;
+    }
     clearRecipeCardChecks();
     const targets = collectTargets();
     if (!targets.length) {
@@ -273,7 +287,9 @@
     const state = {
       selectionCacheVersion: SELECTION_CACHE_VERSION,
       targets: collectTargetState(),
-      enabledRecipeIds: selectedRecipeIdsPayload(),
+      enabledRecipeIds: plannerReady
+        ? selectedRecipeIdsPayload()
+        : normalizedRecipeIdList(savedState.enabledRecipeIds),
       savedTargetPlans,
       targetHistory,
       recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
@@ -727,6 +743,9 @@
   }
 
   function activatePlanCacheForCurrentTargets() {
+    if (!plannerReady) {
+      return;
+    }
     const nextKey = currentTargetRecipeSelectionKey();
     if (nextKey === activePlanKey) {
       return;
