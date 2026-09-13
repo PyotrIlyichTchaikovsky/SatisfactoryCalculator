@@ -81,7 +81,7 @@ class ReleaseTransactionTests(unittest.TestCase):
     def test_post_deploy_failure_restores_pair_and_remains_a_failed_release(self):
         cloud=self.cloud()
         with patch.object(release,"check_api"),patch.object(release,"check_live",side_effect=release.ReleaseError("page regression")):
-            with self.assertRaisesRegex(release.ReleaseError,"rolled_back"):
+            with self.assertRaisesRegex(release.ReleaseError,"rolled_back.*page regression"):
                 release.deploy(self.config,cloud,self.state)
         cloud.restore.assert_called_once_with(self.old)
         self.assertEqual(release.read_json(self.work/"transaction.json")["status"],"rolled_back")

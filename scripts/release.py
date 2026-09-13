@@ -347,7 +347,10 @@ def deploy(config, cloud, state):
         except Exception:
             state["status"] = "recovery_required"
         write_json(WORK / "transaction.json", state)
-        raise ReleaseError(f"Deployment failed during {state.get('phase', 'unknown')}: {state['status']}. Recovery snapshot is preserved; inspect workflow artifacts and provider logs.") from error
+        raise ReleaseError(
+            f"Deployment failed during {state.get('phase', 'unknown')}: {state['status']}. "
+            f"Cause: {state['failure']} Recovery snapshot is preserved; inspect workflow artifacts and provider logs."
+        ) from error
     write_json(WORK / "transaction.json", state)
     if config.environment == "staging":
         candidate.update(stagingPassed=True, stagingIdentity=config.identity())
