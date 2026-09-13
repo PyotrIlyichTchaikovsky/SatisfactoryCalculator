@@ -94,6 +94,27 @@ class ReleaseTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError,"recovery_required"):
             release.deploy(self.config,cloud,self.state)
 
+    def test_candidate_api_check_retries_transient_tag_propagation(self):
+        with patch.object(release,"check_api",side_effect=[OSError("not propagated"),None]) as check, patch.object(release.time,"sleep") as sleep:
+            release.check_api_until_ready("https://candidate.example","staging",attempts=3,delay=2)
+        self.assertEqual(check.call_count,2)
+        sleep.assert_called_once_with(2)
+
+    def test_restore_accepts_missing_frontend_when_no_frontend_was_changed(self):
+        cloud=release.Cloud(self.config)
+        backend={"metadata":{"name":"planner-prod"},"status":{"traffic":[{"revisionName":"old-revision","percent":100}]}}
+        with patch.object(cloud,"cf",return_value={"canonical_deployment":None,"production_branch":"main"}), patch.object(cloud,"service",return_value=backend), patch.object(cloud,"set_traffic") as traffic, patch.object(release,"check_api_until_ready") as check:
+            cloud.restore({"traffic":{"old-revision":100},"frontendDeployment":None,"manifest":None})
+        traffic.assert_called_once_with({"old-revision":100})
+        check.assert_called_once_with("https://api.example","production",legacy=True)
+
+    def test_failed_deploy_records_safe_failure_phase(self):
+        cloud=self.cloud(); cloud.stage_backend.side_effect=release.ReleaseError("provider failed")
+        with self.assertRaisesRegex(release.ReleaseError,"deploy_backend_candidate"):
+            release.deploy(self.config,cloud,self.state)
+        saved=release.read_json(self.work/"transaction.json")
+        self.assertEqual(saved["phase"],"deploy_backend_candidate")
+
     def test_restore_attempts_backend_even_if_frontend_provider_fails(self):
         cloud=release.Cloud(self.config)
         with patch.object(cloud,"cf",side_effect=release.ReleaseError("provider down")),patch.object(cloud,"set_traffic") as traffic:

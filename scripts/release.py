@@ -192,27 +192,34 @@ class Cloud:
     def restore(self, snapshot):
         errors = []
         # Try both independent restores even when one provider fails.
-        if snapshot.get("frontendDeployment"):
-            try:
-                active = (self.cf().get("canonical_deployment") or {}).get("id")
-                if active != snapshot["frontendDeployment"]:
+        try:
+            active = (self.cf().get("canonical_deployment") or {}).get("id")
+            if active != snapshot.get("frontendDeployment"):
+                if snapshot.get("frontendDeployment"):
                     self.cf("/deployments/" + quote(snapshot["frontendDeployment"], safe="") + "/rollback", "POST")
-            except Exception:
-                errors.append("frontend restore failed")
-        else:
-            errors.append("no previous frontend deployment")
-        if snapshot.get("traffic"):
-            try:
+                else:
+                    errors.append("frontend has no recoverable baseline")
+        except Exception:
+            errors.append("frontend restore failed")
+        try:
+            if snapshot.get("traffic"):
                 self.set_traffic(snapshot["traffic"])
-            except Exception:
-                errors.append("backend restore failed")
-        else:
-            errors.append("no previous backend revision")
+            else:
+                service = self.service()
+                status = service.get("status", {}) if service else {}
+                active_traffic = {row["revisionName"]: row["percent"] for row in status.get("traffic", []) if row.get("percent") and row.get("revisionName")}
+                if active_traffic:
+                    errors.append("backend has no recoverable baseline")
+        except Exception:
+            errors.append("backend restore failed")
         require(not errors, "; ".join(errors))
         actual = self.snapshot()
         require(actual["traffic"] == snapshot["traffic"] and actual["frontendDeployment"] == snapshot["frontendDeployment"], "Provider state does not match recovery target")
         expected = snapshot.get("manifest")
-        check_live(self.c, expected, browser=True)
+        if snapshot.get("frontendDeployment"):
+            check_live(self.c, expected, browser=True)
+        elif snapshot.get("traffic"):
+            check_api_until_ready(self.c["PLANNER_API_BASE_URL"], self.c.environment, legacy=True)
 
 
 def check_api(base_url, environment, sha=None, data_version=None, legacy=False):
@@ -234,11 +241,22 @@ def check_api(base_url, environment, sha=None, data_version=None, legacy=False):
         require(not body.get("recipeExpansionRequired") and body.get("summary", {}).get("targetCount") == len(targets) and body.get("summary", {}).get("recipeRunCount", 0) > 0, "Calculation smoke check failed")
 
 
+def check_api_until_ready(base_url, environment, sha=None, data_version=None, legacy=False, attempts=5, delay=3):
+    """Allow a newly-created Cloud Run tag time to become reachable."""
+    for attempt in range(attempts):
+        try:
+            return check_api(base_url, environment, sha, data_version, legacy)
+        except Exception:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 def check_live(config, expected, browser=True):
     # Only retry transient API/metadata propagation; a browser regression fails immediately.
     for attempt in range(5):
         try:
-            check_api(config["PLANNER_API_BASE_URL"], config.environment, expected.get("sha") if expected else None, expected.get("dataVersion") if expected else None, legacy=expected is None)
+            check_api_until_ready(config["PLANNER_API_BASE_URL"], config.environment, expected.get("sha") if expected else None, expected.get("dataVersion") if expected else None, legacy=expected is None, attempts=1)
             if expected:
                 verify_manifest(get_json(config["PUBLIC_SITE_URL"] + "/release.json"), expected, config.environment)
             break
@@ -283,14 +301,24 @@ def deploy(config, cloud, state):
     candidate = state["candidate"]
     try:
         state["status"] = "deploying"
+        state["phase"] = "deploy_backend_candidate"
         write_json(WORK / "transaction.json", state)
         revision, tagged_url = cloud.stage_backend(candidate["image"], candidate["sha"], candidate["releaseId"], state["before"])
-        check_api(tagged_url, config.environment, candidate["sha"], candidate["dataVersion"])
+        state["phase"] = "verify_backend_candidate"
+        write_json(WORK / "transaction.json", state)
+        check_api_until_ready(tagged_url, config.environment, candidate["sha"], candidate["dataVersion"])
+        state["phase"] = "activate_backend_candidate"
+        write_json(WORK / "transaction.json", state)
         cloud.set_traffic({revision: 100})
+        state["phase"] = "publish_frontend_candidate"
+        write_json(WORK / "transaction.json", state)
         frontend = cloud.publish_frontend(candidate["sha"])
+        state["phase"] = "verify_deployed_pair"
+        write_json(WORK / "transaction.json", state)
         check_live(config, state["manifest"])
         state["after"] = {"traffic": {revision: 100}, "frontendDeployment": frontend, "manifest": state["manifest"]}
         state["status"] = "success"
+        state["phase"] = "complete"
     except Exception as error:
         state["status"] = "failed"
         state["failure"] = str(error) if isinstance(error, ReleaseError) else type(error).__name__
@@ -304,7 +332,7 @@ def deploy(config, cloud, state):
         except Exception:
             state["status"] = "recovery_required"
         write_json(WORK / "transaction.json", state)
-        raise ReleaseError(f"Deployment failed: {state['status']}. Recovery snapshot is preserved; inspect workflow artifacts and provider logs.") from error
+        raise ReleaseError(f"Deployment failed during {state.get('phase', 'unknown')}: {state['status']}. Recovery snapshot is preserved; inspect workflow artifacts and provider logs.") from error
     write_json(WORK / "transaction.json", state)
     if config.environment == "staging":
         candidate.update(stagingPassed=True, stagingIdentity=config.identity())
