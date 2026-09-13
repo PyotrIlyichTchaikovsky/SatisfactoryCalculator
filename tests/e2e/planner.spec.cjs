@@ -22,7 +22,6 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
     },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate release'}).toBe(expectedSha);
     manifest=await (await request.get(manifestUrl,{headers:{'Cache-Control':'no-cache'}})).json();
   }
-  await page.setExtraHTTPHeaders({'Cache-Control':'no-cache','Pragma':'no-cache'});
   let response;
   if(!legacy && expectedSha) {
     const expectedLabel=`Release test environment: ${expectedSha.slice(0,12)}`;
