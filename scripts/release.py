@@ -48,7 +48,12 @@ def run(args, extra_env=None):
 
 
 def get_json(url):
-    with urlopen(Request(url, headers={"Cache-Control": "no-cache"}), timeout=30) as response:
+    headers = {
+        "Accept": "application/json",
+        "Cache-Control": "no-cache",
+        "User-Agent": "SatisfactoryCalculator-Release/1.0",
+    }
+    with urlopen(Request(url, headers=headers), timeout=30) as response:
         return json.load(response)
 
 

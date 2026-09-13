@@ -132,6 +132,17 @@ class ReleaseTransactionTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError,"environment mismatch"):
                 release.check_api("https://api.example","production")
 
+    def test_public_json_requests_identify_the_release_client(self):
+        response=Mock()
+        response.__enter__=Mock(return_value=response)
+        response.__exit__=Mock(return_value=False)
+        response.read.return_value=b'{"ok": true}'
+        with patch.object(release,"urlopen",return_value=response) as open_url:
+            self.assertEqual(release.get_json("https://stage.example/release.json"),{"ok":True})
+        request=open_url.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"),"SatisfactoryCalculator-Release/1.0")
+        self.assertEqual(request.get_header("Accept"),"application/json")
+
     def test_https_configuration_validation(self):
         for invalid in ("http://api.example","https://user:secret@api.example","https://api.example/path","https://api.example?token=secret"):
             with patch.dict(os.environ,PLANNER_API_BASE_URL=invalid):
