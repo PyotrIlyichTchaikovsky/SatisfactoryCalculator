@@ -39,11 +39,20 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
-def run(args, extra_env=None):
+def run(args, extra_env=None, expose_failure=False):
     result = subprocess.run(args, capture_output=True, text=True, env={**os.environ, **(extra_env or {})})
     if result.returncode:
         # Do not dump provider output that could include secret environment values.
-        raise ReleaseError(f"{args[0]} {args[1] if len(args)>1 else ''} failed (exit {result.returncode}). Check provider deployment logs.")
+        detail = ""
+        if expose_failure:
+            output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+            for name in ("CLOUDFLARE_API_TOKEN", "SENTRY_DSN", "SENTRY_FRONTEND_DSN", "PLANNER_MONITORING_TEST_TOKEN"):
+                secret = os.getenv(name, "")
+                if secret:
+                    output = output.replace(secret, "[redacted]")
+            lines = output.splitlines()
+            detail = "\n" + "\n".join(lines[-30:])[-4000:] if lines else ""
+        raise ReleaseError(f"{args[0]} {args[1] if len(args)>1 else ''} failed (exit {result.returncode}).{detail or ' Check provider deployment logs.'}")
     return result.stdout.strip()
 
 
@@ -273,7 +282,8 @@ def check_live(config, expected, browser=True):
         run(["node", "node_modules/@playwright/test/cli.js", "test"], {
             "SITE_URL": config["PUBLIC_SITE_URL"], "API_URL": config["PLANNER_API_BASE_URL"],
             "EXPECTED_ENVIRONMENT": config.environment, "EXPECTED_SHA": expected.get("sha", "") if expected else "",
-            "EXPECTED_RELEASE_ID": expected.get("releaseId", "") if expected else "", "LEGACY_BASELINE": "false" if expected else "true"})
+            "EXPECTED_RELEASE_ID": expected.get("releaseId", "") if expected else "", "LEGACY_BASELINE": "false" if expected else "true"},
+            expose_failure=True)
 
 
 def package_frontend(config, candidate):

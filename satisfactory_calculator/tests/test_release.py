@@ -143,6 +143,16 @@ class ReleaseTransactionTests(unittest.TestCase):
         self.assertEqual(request.get_header("User-agent"),"SatisfactoryCalculator-Release/1.0")
         self.assertEqual(request.get_header("Accept"),"application/json")
 
+    def test_browser_failure_summary_is_visible_and_secrets_are_redacted(self):
+        result=Mock(returncode=1,stdout="1 failed\nexpected page title",stderr="token-value")
+        with patch.object(release.subprocess,"run",return_value=result), patch.dict(os.environ,{"CLOUDFLARE_API_TOKEN":"token-value"}):
+            with self.assertRaises(release.ReleaseError) as raised:
+                release.run(["node","playwright"],expose_failure=True)
+        message=str(raised.exception)
+        self.assertIn("expected page title",message)
+        self.assertIn("[redacted]",message)
+        self.assertNotIn("token-value",message)
+
     def test_https_configuration_validation(self):
         for invalid in ("http://api.example","https://user:secret@api.example","https://api.example/path","https://api.example?token=secret"):
             with patch.dict(os.environ,PLANNER_API_BASE_URL=invalid):
