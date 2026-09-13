@@ -3,6 +3,8 @@ const {test,expect} = require('@playwright/test');
 test('deployed page calculates, draws, saves, restores and produces a correlated report', async ({page,request}) => {
   const failures=[];
   const apiOrigin=new URL(process.env.API_URL).origin;
+  const expectedSha=process.env.EXPECTED_SHA || '';
+  const legacy=process.env.LEGACY_BASELINE==='true';
   page.on('pageerror',error=>failures.push(error.message));
   page.on('requestfailed',req=>{
     if(['script','stylesheet','image','fetch','xhr'].includes(req.resourceType())) failures.push(req.url()+': '+req.failure()?.errorText);
@@ -10,17 +12,25 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   const plannerApiPaths=new Set(['/api/summary','/api/materials','/api/recipes','/api/plan']);
   const apiRequests=[];
   page.on('request',req=>{if(plannerApiPaths.has(new URL(req.url()).pathname)) apiRequests.push(req.url());});
-  const response=await page.goto('/');
+  let manifest={apiBaseUrl:process.env.API_URL,environment:process.env.EXPECTED_ENVIRONMENT};
+  if(!legacy) {
+    const manifestUrl=`/release.json?release=${encodeURIComponent(expectedSha)}`;
+    await expect.poll(async()=>{
+      const candidate=await request.get(manifestUrl,{headers:{'Cache-Control':'no-cache'}});
+      if(!candidate.ok()) return '';
+      return (await candidate.json()).sha || '';
+    },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate release'}).toBe(expectedSha);
+    manifest=await (await request.get(manifestUrl,{headers:{'Cache-Control':'no-cache'}})).json();
+  }
+  const response=await page.goto(expectedSha ? `/?release=${encodeURIComponent(expectedSha)}` : '/');
   expect(response.ok()).toBeTruthy();
   await expect(page.locator('#dataSummary')).toContainText('recipes');
-  const legacy=process.env.LEGACY_BASELINE==='true';
-  const manifest=legacy ? {apiBaseUrl:process.env.API_URL,environment:process.env.EXPECTED_ENVIRONMENT} : await (await request.get('/release.json')).json();
-  if(process.env.EXPECTED_SHA) expect(manifest.sha).toBe(process.env.EXPECTED_SHA);
+  if(expectedSha) expect(manifest.sha).toBe(expectedSha);
   if(process.env.EXPECTED_RELEASE_ID) expect(manifest.releaseId).toBe(process.env.EXPECTED_RELEASE_ID);
   expect(manifest.environment).toBe(process.env.EXPECTED_ENVIRONMENT);
   expect(manifest.apiBaseUrl).toBe(process.env.API_URL);
   if(!legacy && manifest.environment==='staging') {
-    await expect(page.locator('#releaseLabel')).toContainText('Release test environment');
+    await expect(page.locator('#releaseLabel')).toContainText(`Release test environment: ${expectedSha.slice(0,12)}`);
     expect(response.headers()['x-robots-tag']).toContain('noindex');
   }
   await page.locator('.item-input').first().fill('Iron Plate');
