@@ -15,12 +15,18 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   let manifest={apiBaseUrl:process.env.API_URL,environment:process.env.EXPECTED_ENVIRONMENT};
   if(!legacy) {
     const manifestUrl=`/release.json?release=${encodeURIComponent(expectedSha)}`;
+    let candidateManifest;
     await expect.poll(async()=>{
       const candidate=await request.get(manifestUrl,{headers:{'Cache-Control':'no-cache'}});
       if(!candidate.ok()) return '';
-      return (await candidate.json()).sha || '';
+      try {
+        candidateManifest=await candidate.json();
+        return candidateManifest.sha || '';
+      } catch {
+        return '';
+      }
     },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate release'}).toBe(expectedSha);
-    manifest=await (await request.get(manifestUrl,{headers:{'Cache-Control':'no-cache'}})).json();
+    manifest=candidateManifest;
   }
   let response;
   if(!legacy && expectedSha) {
