@@ -24,7 +24,9 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   }
   let response;
   if(!legacy && expectedSha) {
-    const expectedLabel=`Release test environment · Version ${manifest.version}`;
+    const expectedLabel=manifest.environment==='staging'
+      ? `Release test environment · Version ${manifest.version}`
+      : `Version ${manifest.version}`;
     await expect.poll(async()=>{
       response=await page.goto(`/?release=${encodeURIComponent(expectedSha)}&attempt=${Date.now()}`,{waitUntil:'domcontentloaded'});
       if(!response?.ok()) return '';
