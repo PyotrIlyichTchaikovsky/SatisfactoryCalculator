@@ -197,6 +197,8 @@ def content_security_policy(config: dict[str, object]) -> str:
     sentry_script_origin = origin_from_url(str(config["sentryBrowserScriptUrl"]))
     if sentry_script_origin:
         script_src.append(sentry_script_origin)
+    if config.get("sentryEnvironment") == "production":
+        script_src.append("https://static.cloudflareinsights.com")
     if config["sentryDsn"]:
         sentry_origin = origin_from_url(str(config["sentryDsn"]))
         if sentry_origin:

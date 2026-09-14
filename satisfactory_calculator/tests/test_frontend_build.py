@@ -21,6 +21,13 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
 
 
 class ReleaseFrontendTests(unittest.TestCase):
+    def test_production_csp_allows_cloudflare_web_analytics_beacon(self):
+        base = {"apiBaseUrl": "https://api.example", "sentryBrowserScriptUrl": "", "sentryDsn": "", "adsenseEnabled": False, "adsenseClient": ""}
+        production_csp = build_frontend.content_security_policy(dict(base, sentryEnvironment="production"))
+        staging_csp = build_frontend.content_security_policy(dict(base, sentryEnvironment="staging"))
+        self.assertIn("https://static.cloudflareinsights.com", production_csp)
+        self.assertNotIn("https://static.cloudflareinsights.com", staging_csp)
+
     def test_staging_html_and_headers_are_labeled_and_not_indexed(self):
         with patch.dict(build_frontend.os.environ, {"SENTRY_ENVIRONMENT":"staging", "SENTRY_RELEASE":"a"*40, "RELEASE_VERSION":"v2026.09.14.42.1"}, clear=True):
             config=build_frontend.frontend_config()
