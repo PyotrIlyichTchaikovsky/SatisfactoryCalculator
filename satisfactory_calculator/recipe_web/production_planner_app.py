@@ -58,6 +58,7 @@ class PlannerAppSettings:
     sentry_dsn: str
     sentry_environment: str
     sentry_release: str
+    release_version: str
     sentry_traces_sample_rate: float
     monitoring_test_token: str = ""
 
@@ -92,6 +93,7 @@ class PlannerAppSettings:
             sentry_dsn=os.getenv("SENTRY_DSN", "").strip(),
             sentry_environment=os.getenv("SENTRY_ENVIRONMENT", os.getenv("PLANNER_ENVIRONMENT", "production")).strip(),
             sentry_release=os.getenv("SENTRY_RELEASE", "").strip(),
+            release_version=os.getenv("PLANNER_VERSION", "development").strip(),
             sentry_traces_sample_rate=min(1.0, _env_float("SENTRY_TRACES_SAMPLE_RATE", 0.0, minimum=0.0)),
         )
 
@@ -250,6 +252,7 @@ class ProductionPlannerApp:
                 message = {**message, "headers": [*message.get("headers", []),
                     (b"x-request-id", request_id.encode("ascii")),
                     (b"x-planner-release", self.settings.sentry_release.encode("ascii", errors="replace")),
+                    (b"x-planner-version", self.settings.release_version.encode("ascii", errors="replace")),
                     (b"x-planner-data-version", data_version.encode("ascii"))]}
             await original_send(message)
 
@@ -320,6 +323,7 @@ class ProductionPlannerApp:
                     "solverReady": ready,
                     "environment": self.settings.sentry_environment,
                     "release": self.settings.sentry_release,
+                    "version": self.settings.release_version,
                     "dataVersion": data_version,
                     "uptimeSeconds": round(time.time() - app_started_at, 3),
                     "recipeCount": len(self.planner.recipes),
@@ -753,6 +757,7 @@ class JsonLogFormatter(logging.Formatter):
         payload = {"severity": record.levelname, "message": record.getMessage(),
                    "logger": record.name, "request_id": request_id_context.get(),
                    "release": os.getenv("SENTRY_RELEASE", ""),
+                   "version": os.getenv("PLANNER_VERSION", "development"),
                    "environment": os.getenv("SENTRY_ENVIRONMENT", "production")}
         for key in ("method", "path", "status", "duration_ms", "monitoring_test"):
             if hasattr(record, key):

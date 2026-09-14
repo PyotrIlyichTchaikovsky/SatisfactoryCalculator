@@ -28,6 +28,7 @@ def application_digest() -> str:
 def release_manifest(config: dict[str, object]) -> dict[str, object]:
     return {"schema": 1, "sha": config["sentryRelease"],
             "environment": config["sentryEnvironment"], "releaseId": env("RELEASE_ID"),
+            "version": config["releaseVersion"],
             "apiBaseUrl": config["apiBaseUrl"], "applicationDigest": application_digest(),
             "dataVersion": hashlib.sha256((SOURCE_DIR / "data" / "Data.xlsx").read_bytes()).hexdigest()[:16],
             "configDigest": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()}
@@ -91,6 +92,7 @@ def frontend_config() -> dict[str, object]:
         "sentryDsn": env("SENTRY_DSN"),
         "sentryEnvironment": env("SENTRY_ENVIRONMENT", "production"),
         "sentryRelease": env("SENTRY_RELEASE"),
+        "releaseVersion": env("RELEASE_VERSION"),
         "adsenseClient": adsense_client,
         "adsenseEnabled": env_bool("ADSENSE_ENABLED", bool(adsense_client)),
         "publicSiteUrl": normalize_site_url(env("PUBLIC_SITE_URL")),
@@ -122,10 +124,10 @@ def render_html(source_path: Path, config: dict[str, object], asset_names: dict[
             f'  <link rel="canonical" href="{escape_attr(public_site_url)}/">',
         )
 
-    label = "Release test environment" if config["sentryEnvironment"] == "staging" else "Version"
-    if config["sentryRelease"]:
-        version = escape_attr(str(config["sentryRelease"])[:12])
-        html = html.replace('<p id="dataSummary">', f'<p id="releaseLabel">{label}: {version}</p>\n      <p id="dataSummary">', 1)
+    if config["releaseVersion"]:
+        prefix = "Release test environment · Version" if config["sentryEnvironment"] == "staging" else "Version"
+        version = escape_attr(str(config["releaseVersion"]))
+        html = html.replace('<p id="dataSummary">', f'<p id="releaseLabel">{prefix} {version}</p>\n      <p id="dataSummary">', 1)
     if config["sentryEnvironment"] == "staging":
         html = html.replace("</head>", '  <meta name="robots" content="noindex, nofollow">\n</head>', 1)
     if injections:

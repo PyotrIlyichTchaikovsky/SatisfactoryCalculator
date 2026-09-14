@@ -947,7 +947,7 @@
     }
   }
 
-  function addTargetRow(initialItem = null, initialRate = "", options = {}) {
+  function addTargetRow(initialItem = null, initialRate = "1", options = {}) {
     const fragment = targetTemplate.content.cloneNode(true);
     const row = fragment.querySelector(".target-row");
     const itemInput = row.querySelector(".item-input");
@@ -961,9 +961,7 @@
     if (initialItem) {
       selectItem(row, initialItem);
     }
-    if (initialRate !== "") {
-      amountInput.value = initialRate;
-    }
+    amountInput.value = initialRate === "" ? "1" : initialRate;
 
     itemInput.addEventListener("input", () => {
       activatePlanCacheForCurrentTargets();
@@ -3839,22 +3837,10 @@
   }
 
   function summaryText(summary) {
-    const parts = [
+    return [
       `${formatInteger(summary.recipeCount)} recipes`,
       `${formatInteger(summary.itemCount)} items`,
-    ];
-    if (summary.generatedAt) {
-      parts.push(`Excel generated ${formatTimestamp(summary.generatedAt)}`);
-    }
-    return parts.join(" · ");
-  }
-
-  function formatTimestamp(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-    return date.toLocaleString("en-US", { hour12: false });
+    ].join(" · ");
   }
 
   function appendCell(row, text, className = "") {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -27,7 +28,8 @@ class ReleaseTransactionTests(unittest.TestCase):
         self.config = release.Config()
         self.stage = dict(self.config.identity(),CLOUD_RUN_SERVICE="planner-stage",CLOUDFLARE_PAGES_PROJECT="planner-stage",PUBLIC_SITE_URL="https://stage.example",PLANNER_API_BASE_URL="https://stage-api.example")
         self.candidate = {"schema":1,"sha":"a"*40,"releaseId":"123-1","image":"asia-east1-docker.pkg.dev/project/images/planner@sha256:"+"b"*64,
-                          "applicationDigest":"c"*64,"dataVersion":"d"*16,"stagingPassed":True,"stagingIdentity":self.stage}
+                          "version":"v2026.09.14.42.1","applicationDigest":"c"*64,"dataVersion":"d"*16,
+                          "stagingPassed":True,"stagingIdentity":self.stage}
         self.old = {"traffic":{"old-revision":100},"frontendDeployment":"old-pages","manifest":None}
         self.state = {"schema":1,"environment":"production","identity":self.config.identity(),"before":self.old,
                       "candidate":self.candidate,"manifest":dict(self.candidate,environment="production"),"status":"prepared"}
@@ -43,6 +45,10 @@ class ReleaseTransactionTests(unittest.TestCase):
         cloud.stage_backend.return_value=("new-revision","https://candidate.example")
         cloud.publish_frontend.return_value="new-pages"
         return cloud
+
+    def test_release_version_uses_china_date_and_commit(self):
+        instant = datetime(2026, 9, 13, 17, 30, tzinfo=timezone.utc)
+        self.assertEqual(release.build_release_version("42", "1", instant), "v2026.09.14.42.1")
 
     def test_production_rejects_mutable_image_and_environment_reuse(self):
         with patch.object(release.build_frontend,"application_digest",return_value="c"*64):

@@ -45,7 +45,6 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       PLANNER_MONITORING_TEST_TOKEN: ${{ secrets.PLANNER_MONITORING_TEST_TOKEN }}
-      IMAGE_TAG: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/planner:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,6 +53,10 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Create release version
+        id: version
+        shell: bash
+        run: echo "value=$(python scripts/release.py version)" >> "$GITHUB_OUTPUT"
       - name: Validate environment configuration
         run: python scripts/release.py validate
       - name: Validate registry
@@ -69,10 +72,14 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.IMAGE_TAG }}
+          tags: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/planner:${{ steps.version.outputs.value }}
+          build-args: |
+            RELEASE_VERSION=${{ steps.version.outputs.value }}
+            VCS_REF=${{ github.sha }}
       - name: Record immutable candidate
         env:
           CANDIDATE_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/planner@${{ steps.image.outputs.digest }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: python scripts/release.py candidate
       - name: Prepare staging and capture recovery snapshot
         run: python scripts/release.py prepare
@@ -147,6 +154,10 @@ jobs:
         with:
           name: candidate-${{ env.RELEASE_ID }}
           path: release-work/
+      - name: Read tested release version
+        id: version
+        shell: bash
+        run: echo "value=$(python -c 'import json; print(json.load(open("release-work/candidate.json", encoding="utf-8"))["version"])')" >> "$GITHUB_OUTPUT"
       - name: Verify candidate and capture production recovery snapshot
         run: python scripts/release.py prepare
       - name: Preserve production snapshot before cloud mutations
@@ -160,10 +171,11 @@ jobs:
       - name: Archive successful production version for long-term rollback
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
         shell: bash
         run: |
           python -c 'from pathlib import Path; import shutil; shutil.copyfile("release-work/transaction.json", "release-work/production.json"); Path("release-work/notes.md").write_text("Production API and browser checks passed. The attached production.json records the matching frontend deployment and backend revision for rollback.")'
-          gh release create "planner-$RELEASE_ID" release-work/production.json --target "$GITHUB_SHA" --title "Planner $RELEASE_ID" --notes-file release-work/notes.md
+          gh release create "planner-$RELEASE_ID" release-work/production.json --target "$GITHUB_SHA" --title "Planner $RELEASE_VERSION" --notes-file release-work/notes.md
       - name: Preserve production release and recovery evidence
         if: always()
         uses: actions/upload-artifact@v4

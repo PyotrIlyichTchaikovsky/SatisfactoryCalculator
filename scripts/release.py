@@ -1,6 +1,7 @@
 """Release transaction for Cloud Run + Cloudflare Pages (never used for pull requests)."""
 from __future__ import annotations
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ from urllib.request import Request, urlopen
 import build_frontend
 
 WORK = Path("release-work")
+RELEASE_TIMEZONE = timezone(timedelta(hours=8))
 
 
 class ReleaseError(RuntimeError):
@@ -37,6 +39,11 @@ def write_json(path, value):
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+
+
+def build_release_version(run_number, run_attempt, now=None):
+    timestamp = (now or datetime.now(RELEASE_TIMEZONE)).astimezone(RELEASE_TIMEZONE)
+    return f"v{timestamp:%Y.%m.%d}.{run_number}.{run_attempt}"
 
 
 def run(args, extra_env=None, expose_failure=False):
@@ -103,6 +110,7 @@ def validate_candidate(candidate, config):
     require(candidate.get("schema") == 1, "Unknown candidate schema")
     require(re.fullmatch(r"[0-9a-f]{40}", candidate.get("sha", "")), "Candidate requires a full commit SHA")
     require(re.fullmatch(r"[0-9]+-[0-9]+", candidate.get("releaseId", "")), "Invalid release ID")
+    require(re.fullmatch(r"v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+\.[0-9]+", candidate.get("version", "")), "Invalid release version")
     require(re.fullmatch(r"[a-z0-9.-]+-docker\.pkg\.dev/[a-zA-Z0-9_./-]+@sha256:[0-9a-f]{64}", candidate.get("image", "")), "Candidate requires an immutable Artifact Registry digest")
     require(candidate["sha"] == os.getenv("GITHUB_SHA", candidate["sha"]), "Checkout and candidate SHA differ")
     require(candidate["applicationDigest"] == build_frontend.application_digest(), "Application source differs from the tested candidate")
@@ -115,7 +123,7 @@ def validate_candidate(candidate, config):
 
 
 def verify_manifest(actual, expected, environment):
-    for key in ("sha", "releaseId", "applicationDigest", "dataVersion"):
+    for key in ("sha", "releaseId", "version", "applicationDigest", "dataVersion"):
         require(actual.get(key) == expected.get(key), f"Deployed frontend {key} mismatch")
     require(actual.get("environment") == environment, "Deployed frontend environment mismatch")
 
@@ -167,10 +175,11 @@ class Cloud:
                 require(os.getenv("ALLOW_UNMANAGED_BASELINE") == "true", "Existing production has no release manifest. Review migration instructions before opting into ALLOW_UNMANAGED_BASELINE.")
         return {"traffic": traffic, "frontendDeployment": deployment, "manifest": manifest}
 
-    def stage_backend(self, image, sha, release_id, previous):
+    def stage_backend(self, image, sha, release_id, release_version, previous):
         revision = self.c["CLOUD_RUN_SERVICE"] + "-r" + release_id
         require(len(revision) <= 63, "Cloud Run service name is too long for release revisions")
         variables = {"PLANNER_ALLOWED_ORIGINS": self.c["PUBLIC_SITE_URL"], "PLANNER_LOG_LEVEL": "INFO",
+                     "PLANNER_VERSION": release_version,
                      "SENTRY_ENVIRONMENT": self.c.environment, "SENTRY_RELEASE": sha,
                      "SENTRY_DSN": self.c["SENTRY_DSN"], "PLANNER_MONITORING_TEST_TOKEN": self.c["PLANNER_MONITORING_TEST_TOKEN"]}
         # JSON is valid YAML; the secret-bearing file is outside uploaded artifacts.
@@ -236,7 +245,7 @@ class Cloud:
             check_api_until_ready(self.c["PLANNER_API_BASE_URL"], self.c.environment, legacy=True)
 
 
-def check_api(base_url, environment, sha=None, data_version=None, legacy=False):
+def check_api(base_url, environment, sha=None, data_version=None, release_version=None, legacy=False):
     health = get_json(base_url + "/api/health")
     require(health.get("ok") and health.get("solverReady", legacy), "API is not ready for calculations")
     if not legacy:
@@ -245,6 +254,8 @@ def check_api(base_url, environment, sha=None, data_version=None, legacy=False):
         require(health.get("release") == sha, "API release mismatch")
     if data_version:
         require(health.get("dataVersion") == data_version, "API game data mismatch")
+    if release_version:
+        require(health.get("version") == release_version, "API release version mismatch")
     for targets in ([{"itemClass": "Desc_IronPlate_C", "rate": 60}], [{"itemClass": "Desc_RocketFuel_C", "rate": 60}], [{"itemClass": "Desc_IronPlate_C", "rate": 30}, {"itemClass": "Desc_IronRod_C", "rate": 30}]):
         req = Request(base_url + "/api/plan", data=json.dumps({"targets": targets}).encode(), headers={"Content-Type": "application/json"})
         with urlopen(req, timeout=45) as response:
@@ -255,11 +266,11 @@ def check_api(base_url, environment, sha=None, data_version=None, legacy=False):
         require(not body.get("recipeExpansionRequired") and body.get("summary", {}).get("targetCount") == len(targets) and body.get("summary", {}).get("recipeRunCount", 0) > 0, "Calculation smoke check failed")
 
 
-def check_api_until_ready(base_url, environment, sha=None, data_version=None, legacy=False, attempts=5, delay=3):
+def check_api_until_ready(base_url, environment, sha=None, data_version=None, release_version=None, legacy=False, attempts=5, delay=3):
     """Allow a newly-created Cloud Run tag time to become reachable."""
     for attempt in range(attempts):
         try:
-            return check_api(base_url, environment, sha, data_version, legacy)
+            return check_api(base_url, environment, sha, data_version, release_version, legacy)
         except Exception:
             if attempt == attempts - 1:
                 raise
@@ -270,7 +281,11 @@ def check_live(config, expected, browser=True):
     # Only retry transient API/metadata propagation; a browser regression fails immediately.
     for attempt in range(20):
         try:
-            check_api_until_ready(config["PLANNER_API_BASE_URL"], config.environment, expected.get("sha") if expected else None, expected.get("dataVersion") if expected else None, legacy=expected is None, attempts=1)
+            check_api_until_ready(config["PLANNER_API_BASE_URL"], config.environment,
+                                  expected.get("sha") if expected else None,
+                                  expected.get("dataVersion") if expected else None,
+                                  expected.get("version") if expected else None,
+                                  legacy=expected is None, attempts=1)
             if expected:
                 verify_manifest(get_json(config["PUBLIC_SITE_URL"] + "/release.json"), expected, config.environment)
             break
@@ -290,6 +305,7 @@ def package_frontend(config, candidate):
     env = {"PLANNER_API_BASE_URL": config["PLANNER_API_BASE_URL"], "PUBLIC_SITE_URL": config["PUBLIC_SITE_URL"],
            "SENTRY_DSN": config["SENTRY_FRONTEND_DSN"], "SENTRY_BROWSER_SCRIPT_URL": config["SENTRY_BROWSER_SCRIPT_URL"],
            "SENTRY_ENVIRONMENT": config.environment, "SENTRY_RELEASE": candidate["sha"], "RELEASE_ID": candidate["releaseId"],
+           "RELEASE_VERSION": candidate["version"],
            "ADSENSE_ENABLED": os.getenv("ADSENSE_ENABLED") or "false", "ADSENSE_CLIENT": os.getenv("ADSENSE_CLIENT", ""), "FRONTEND_OUTPUT_DIR": str(Path("dist/frontend").resolve())}
     run([sys.executable, "scripts/build_frontend.py"], env)
     manifest = read_json("dist/frontend/release.json")
@@ -302,7 +318,7 @@ def prepare(config, cloud, candidate):
     if config.environment == "production":
         stage = candidate["stagingIdentity"]
         verify_manifest(get_json(stage["PUBLIC_SITE_URL"] + "/release.json"), candidate, "staging")
-        check_api(stage["PLANNER_API_BASE_URL"], "staging", candidate["sha"], candidate["dataVersion"])
+        check_api(stage["PLANNER_API_BASE_URL"], "staging", candidate["sha"], candidate["dataVersion"], candidate["version"])
     manifest = package_frontend(config, candidate)
     state = {"schema": 1, "environment": config.environment, "identity": config.identity(),
              "candidate": candidate, "manifest": manifest, "before": cloud.snapshot(), "status": "prepared"}
@@ -318,10 +334,10 @@ def deploy(config, cloud, state):
         state["status"] = "deploying"
         state["phase"] = "deploy_backend_candidate"
         write_json(WORK / "transaction.json", state)
-        revision, tagged_url = cloud.stage_backend(candidate["image"], candidate["sha"], candidate["releaseId"], state["before"])
+        revision, tagged_url = cloud.stage_backend(candidate["image"], candidate["sha"], candidate["releaseId"], candidate["version"], state["before"])
         state["phase"] = "verify_backend_candidate"
         write_json(WORK / "transaction.json", state)
-        check_api_until_ready(tagged_url, config.environment, candidate["sha"], candidate["dataVersion"])
+        check_api_until_ready(tagged_url, config.environment, candidate["sha"], candidate["dataVersion"], candidate["version"])
         state["phase"] = "activate_backend_candidate"
         write_json(WORK / "transaction.json", state)
         cloud.set_traffic({revision: 100})
@@ -358,7 +374,7 @@ def deploy(config, cloud, state):
     summary = os.getenv("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:
-            stream.write(f"\n### {config.environment}: checks passed\n\nVersion `{candidate['sha']}` / release `{candidate['releaseId']}`\n\n[Open website]({config['PUBLIC_SITE_URL']})\n\n" + ("Manually test this exact version, then approve the production environment job. Reject/cancel this run if it needs fixes.\n" if config.environment == "staging" else "Production checks passed. Recovery artifacts contain the previous and current deployment pair.\n"))
+            stream.write(f"\n### {config.environment}: checks passed\n\nVersion `{candidate['version']}` / commit `{candidate['sha']}` / release `{candidate['releaseId']}`\n\n[Open website]({config['PUBLIC_SITE_URL']})\n\n" + ("Manually test this exact version, then approve the production environment job. Reject/cancel this run if it needs fixes.\n" if config.environment == "staging" else "Production checks passed. Recovery artifacts contain the previous and current deployment pair.\n"))
 
 
 def rollback(config, cloud, state, target):
@@ -375,17 +391,21 @@ def rollback(config, cloud, state, target):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "candidate", "prepare", "deploy", "rollback"])
+    parser.add_argument("command", choices=["version", "validate", "candidate", "prepare", "deploy", "rollback"])
     parser.add_argument("--candidate", default="release-work/candidate.json")
     parser.add_argument("--state", default="release-work/transaction.json")
     parser.add_argument("--target", choices=["before", "after"], default="after")
     args = parser.parse_args()
+    if args.command == "version":
+        print(build_release_version(os.environ["GITHUB_RUN_NUMBER"], os.environ["GITHUB_RUN_ATTEMPT"]))
+        return
     config = Config()
     cloud = Cloud(config)
     if args.command == "validate":
         return
     if args.command == "candidate":
         candidate = {"schema": 1, "sha": os.environ["GITHUB_SHA"], "releaseId": os.environ["RELEASE_ID"],
+                     "version": os.environ["RELEASE_VERSION"],
                      "image": os.environ["CANDIDATE_IMAGE"], "applicationDigest": build_frontend.application_digest(),
                      "dataVersion": hashlib.sha256((build_frontend.SOURCE_DIR / "data/Data.xlsx").read_bytes()).hexdigest()[:16]}
         validate_candidate(candidate, config)

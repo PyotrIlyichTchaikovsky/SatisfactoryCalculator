@@ -85,6 +85,7 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(len(value) == 32 for value in ids))
         self.assertEqual(production_planner_app.request_id_context.get(), "")
         self.assertTrue(all("x-planner-data-version" in headers for _, headers, _ in responses))
+        self.assertTrue(all(headers["x-planner-version"] == self.original_settings.release_version for _, headers, _ in responses))
 
     async def test_large_json_responses_support_gzip(self) -> None:
         status, headers, body = await self.call_app(
@@ -221,6 +222,7 @@ class ProductionPlannerAppTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
+        self.assertEqual(payload["version"], self.original_settings.release_version)
         self.assertIn("planCache", payload)
         self.assertEqual(headers["cache-control"], "no-store, max-age=0")
         self.assertEqual(headers["x-content-type-options"], "nosniff")

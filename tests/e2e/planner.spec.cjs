@@ -24,7 +24,7 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   }
   let response;
   if(!legacy && expectedSha) {
-    const expectedLabel=`Release test environment: ${expectedSha.slice(0,12)}`;
+    const expectedLabel=`Release test environment · Version ${manifest.version}`;
     await expect.poll(async()=>{
       response=await page.goto(`/?release=${encodeURIComponent(expectedSha)}&attempt=${Date.now()}`,{waitUntil:'domcontentloaded'});
       if(!response?.ok()) return '';
@@ -36,13 +36,15 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   expect(response.ok()).toBeTruthy();
   await expect(page.locator('#dataSummary')).toContainText('recipes');
   if(expectedSha) expect(manifest.sha).toBe(expectedSha);
+  if(!legacy) expect(manifest.version).toMatch(/^v\d{4}\.\d{2}\.\d{2}\.\d+\.\d+$/);
   if(process.env.EXPECTED_RELEASE_ID) expect(manifest.releaseId).toBe(process.env.EXPECTED_RELEASE_ID);
   expect(manifest.environment).toBe(process.env.EXPECTED_ENVIRONMENT);
   expect(manifest.apiBaseUrl).toBe(process.env.API_URL);
   if(!legacy && manifest.environment==='staging') {
-    await expect(page.locator('#releaseLabel')).toContainText(`Release test environment: ${expectedSha.slice(0,12)}`);
+    await expect(page.locator('#releaseLabel')).toHaveText(`Release test environment · Version ${manifest.version}`);
     expect(response.headers()['x-robots-tag']).toContain('noindex');
   }
+  await expect(page.locator('.amount-input').first()).toHaveValue('1');
   await page.locator('.item-input').first().fill('Iron Plate');
   await page.locator('.suggestion-option').filter({has:page.getByText('Iron Plate',{exact:true})}).first().click();
   await page.locator('.amount-input').first().fill('60');

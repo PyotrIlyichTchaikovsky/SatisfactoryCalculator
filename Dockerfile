@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+ARG RELEASE_VERSION=development
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.version=$RELEASE_VERSION \
+      org.opencontainers.image.revision=$VCS_REF
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PLANNER_LOG_LEVEL=INFO
