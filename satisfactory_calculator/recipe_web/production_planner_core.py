@@ -300,17 +300,33 @@ class ProductionPlanner:
         baseline_recipe_ids: Any | None = None,
         preferred_plan: Any | None = None,
         enabled_recipe_ids: Any | None = None,
+        disabled_raw_material_classes: Any | None = None,
     ) -> dict[str, Any]:
         parsed_targets = self._parse_targets(targets)
         active_recipe_ids = self._parse_enabled_recipe_ids(enabled_recipe_ids)
+        disabled_raw_classes = self._parse_disabled_raw_material_classes(disabled_raw_material_classes)
+        forced_recipe_selections = self._parse_recipe_selections(selected_recipes)
+        for item_class, recipe_id in forced_recipe_selections.items():
+            group = self.replacement_groups_by_item.get(item_class)
+            if group is None:
+                continue
+            active_recipe_ids.difference_update(group.recipe_ids)
+            if recipe_id != _DIRECT_RAW_RECIPE_ID:
+                active_recipe_ids.add(recipe_id)
         preferred_plan_nodes = self._parse_preferred_plan(preferred_plan)
         try:
-            if preferred_plan_nodes:
+            if forced_recipe_selections:
+                solution = self._solve_linear_plan(
+                    parsed_targets,
+                    active_recipe_ids,
+                    disabled_raw_classes | self._disabled_raw_source_classes(forced_recipe_selections),
+                )
+            elif preferred_plan_nodes and not disabled_raw_classes:
                 solution = self._solve_preferred_plan_milp(parsed_targets, preferred_plan_nodes)
             else:
-                solution = self._solve_linear_plan(parsed_targets, active_recipe_ids, set())
+                solution = self._solve_linear_plan(parsed_targets, active_recipe_ids, disabled_raw_classes)
         except PlannerError as exc:
-            expansion = self._minimum_recipe_expansion(parsed_targets, active_recipe_ids)
+            expansion = self._minimum_recipe_expansion(parsed_targets, active_recipe_ids, disabled_raw_classes)
             if expansion and expansion["recipeIds"]:
                 return self._recipe_expansion_response(parsed_targets, active_recipe_ids, expansion, str(exc))
             raise
@@ -331,6 +347,7 @@ class ProductionPlanner:
             "recipeMode": "custom",
             "selectedRecipes": effective_selections,
             "enabledRecipeIds": sorted(active_recipe_ids),
+            "disabledRawMaterialClasses": sorted(disabled_raw_classes),
             "roots": solution["layers"],
             "layers": solution["layers"],
             "recipeRuns": solution["recipeRuns"],
@@ -395,6 +412,7 @@ class ProductionPlanner:
         self,
         parsed_targets: list[dict[str, Any]],
         active_recipe_ids: set[str],
+        disabled_raw_source_classes: set[str] | None = None,
     ) -> dict[str, Any] | None:
         if milp is None or Bounds is None or LinearConstraint is None:
             return None
@@ -404,7 +422,8 @@ class ProductionPlanner:
         )
         material_classes = self._plan_material_classes(parsed_targets, candidate_recipes)
         material_index = {item_class: index for index, item_class in enumerate(material_classes)}
-        raw_classes = sorted(self.external_source_classes & set(material_classes))
+        disabled_raw_source_classes = disabled_raw_source_classes or set()
+        raw_classes = sorted((self.external_source_classes - disabled_raw_source_classes) & set(material_classes))
         recipe_count = len(candidate_recipes)
         raw_count = len(raw_classes)
         flow_count = recipe_count + raw_count
@@ -550,6 +569,19 @@ class ProductionPlanner:
             recipe_id
             for recipe_id in (str(value or "").strip() for value in enabled_recipe_ids)
             if 0 < len(recipe_id) <= MAX_RECIPE_ID_LENGTH and recipe_id in self.selectable_recipe_ids
+        }
+
+    def _parse_disabled_raw_material_classes(self, values: Any | None) -> set[str]:
+        if values is None:
+            return set()
+        if not isinstance(values, list):
+            raise PlannerError("disabledRawMaterialClasses must be an array of material class IDs.")
+        if len(values) > len(self.external_source_classes):
+            raise PlannerError("disabledRawMaterialClasses contains too many entries.")
+        return {
+            item_class
+            for item_class in (str(value or "").strip() for value in values)
+            if item_class in self.external_source_classes
         }
 
     def _parse_recipe_mode(self, recipe_mode: Any | None) -> str:

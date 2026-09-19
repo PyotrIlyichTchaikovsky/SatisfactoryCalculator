@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="production_planner.css?v=layout-median-barycentric-20260622-1">
   <script defer src="planner_config.js?v=cloud-deploy-20260624-1"></script>
   <script defer src="planner_diagnostics.js"></script>
+  <script defer src="material_picker.js"></script>
   <script defer src="production_planner.js?v=layout-median-barycentric-20260622-1"></script>
 </head>
 <body>
@@ -25,7 +26,6 @@
         <h2 id="targetHeading">Production Targets</h2>
         <div class="panel-actions">
           <button id="recipeFilterButton" class="secondary-button" type="button" disabled>Recipe Filter</button>
-          <button id="addTargetButton" class="secondary-button" type="button">Add Item</button>
         </div>
       </div>
 
@@ -49,6 +49,7 @@
       <form id="plannerForm" autocomplete="off" novalidate>
         <div id="targetRows" class="target-rows"></div>
         <div class="form-actions">
+          <button id="addTargetButton" class="secondary-button add-target-button" type="button" title="Add item" aria-label="Add item">+</button>
           <button id="savePlanButton" class="secondary-button" type="button">Save</button>
           <button id="calculateButton" class="primary-button" type="submit" disabled>Calculate</button>
         </div>
@@ -93,9 +94,8 @@
         <label>Item</label>
         <div class="item-input-box">
           <span class="target-item-icon empty" aria-hidden="true"></span>
-          <input class="item-input" type="text" placeholder="AI Limiter">
+          <input class="item-input" type="text" placeholder="Choose an item" readonly aria-haspopup="dialog" aria-label="Choose target item">
         </div>
-        <div class="suggestions" role="listbox"></div>
       </div>
       <div class="field amount-field">
         <label>Rate per Minute</label>

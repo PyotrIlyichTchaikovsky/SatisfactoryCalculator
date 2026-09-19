@@ -19,6 +19,10 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
         html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
         self.assertLess(html.index('src="planner_diagnostics.js'), html.index('src="production_planner.js'))
 
+    def test_material_picker_asset_precedes_planner(self):
+        html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
+        self.assertLess(html.index('src="material_picker.js'), html.index('src="production_planner.js'))
+
 
 class ReleaseFrontendTests(unittest.TestCase):
     def test_production_csp_allows_cloudflare_web_analytics_beacon(self):

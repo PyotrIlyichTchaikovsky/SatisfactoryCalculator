@@ -16,7 +16,7 @@ OUTPUT_DIR = ROOT_DIR / "dist" / "frontend"
 
 
 def application_digest() -> str:
-    files = [SOURCE_DIR / name for name in ("production_planner.html", "production_planner.css", "production_planner.js", "planner_diagnostics.js", "data/Data.xlsx")]
+    files = [SOURCE_DIR / name for name in ("production_planner.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_diagnostics.js", "data/Data.xlsx")]
     files += sorted((SOURCE_DIR / "data" / "icons").rglob("*.png"))
     digest = hashlib.sha256()
     for path in files:
@@ -67,6 +67,7 @@ def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str
     assets = {
         "production_planner.css": (SOURCE_DIR / "production_planner.css").read_bytes(),
         "planner_diagnostics.js": (SOURCE_DIR / "planner_diagnostics.js").read_bytes(),
+        "material_picker.js": (SOURCE_DIR / "material_picker.js").read_bytes(),
         "production_planner.js": (SOURCE_DIR / "production_planner.js").read_bytes(),
         "planner_config.js": render_planner_config(config).encode("utf-8"),
     }

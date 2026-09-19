@@ -66,6 +66,56 @@ class ProductionPlannerCoreTests(unittest.TestCase):
         self.assertIn("Recipe_Coal_Iron_C", recipe_run_ids)
         self.assertFalse(any(row["item"]["className"] == "Desc_Coal_C" for row in result["rawTotals"]))
 
+    def test_selected_recipe_exclusively_produces_its_material(self) -> None:
+        selected_recipe_id = "Recipe_Alternate_SteelCastedPlate_C"
+        result = self.planner.plan(
+            [{"itemClass": "Desc_IronPlate_C", "rate": 60}],
+            selected_recipes={"Desc_IronPlate_C": selected_recipe_id},
+            enabled_recipe_ids=[*self.planner.default_enabled_recipe_ids, selected_recipe_id],
+        )
+
+        iron_plate_recipe_ids = {
+            run["id"]
+            for run in result["recipeRuns"]
+            if any(output["item"]["className"] == "Desc_IronPlate_C" for output in run["outputs"])
+        }
+        self.assertEqual(iron_plate_recipe_ids, {selected_recipe_id})
+        self.assertLess(sum(float(row["rate"]) for row in result["rawTotals"]), 1000)
+
+    def test_direct_raw_selection_disables_conversion_recipes(self) -> None:
+        result = self.planner.plan(
+            [{"itemClass": "Desc_Coal_C", "rate": 60}],
+            selected_recipes={"Desc_Coal_C": "__raw__"},
+            enabled_recipe_ids=list(self.planner.selectable_recipe_ids),
+        )
+
+        self.assertFalse(
+            any(
+                output["item"]["className"] == "Desc_Coal_C"
+                for run in result["recipeRuns"]
+                for output in run["outputs"]
+            )
+        )
+        coal = next(row for row in result["rawTotals"] if row["item"]["className"] == "Desc_Coal_C")
+        self.assertEqual(coal["rate"], 60)
+
+    def test_disabled_raw_material_must_be_produced_by_a_recipe(self) -> None:
+        result = self.planner.plan(
+            [{"itemClass": "Desc_Coal_C", "rate": 60}],
+            enabled_recipe_ids=list(self.planner.selectable_recipe_ids),
+            disabled_raw_material_classes=["Desc_Coal_C"],
+        )
+
+        self.assertFalse(any(row["item"]["className"] == "Desc_Coal_C" for row in result["rawTotals"]))
+        self.assertTrue(
+            any(
+                output["item"]["className"] == "Desc_Coal_C"
+                for run in result["recipeRuns"]
+                for output in run["outputs"]
+            )
+        )
+        self.assertEqual(result["disabledRawMaterialClasses"], ["Desc_Coal_C"])
+
     def test_rejects_too_many_targets(self) -> None:
         targets = [{"itemClass": "Desc_IronPlate_C", "rate": 1} for _ in range(MAX_TARGETS + 1)]
 

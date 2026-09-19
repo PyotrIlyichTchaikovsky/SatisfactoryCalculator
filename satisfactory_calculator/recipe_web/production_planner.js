@@ -5,6 +5,7 @@
   const targetTemplate = document.getElementById("targetRowTemplate");
   const addTargetButton = document.getElementById("addTargetButton");
   const savePlanButton = document.getElementById("savePlanButton");
+  const planLibrary = document.querySelector(".plan-library");
   const savedPlanSelect = document.getElementById("savedPlanSelect");
   const historyPlanSelect = document.getElementById("historyPlanSelect");
   const recipeFilterButton = document.getElementById("recipeFilterButton");
@@ -17,8 +18,7 @@
   const resetLayoutButton = document.getElementById("resetLayoutButton");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
-  const SELECTION_CACHE_VERSION = 4;
-  const RAW_PLAN_NODE_PREFIX = "RAW:";
+  const SELECTION_CACHE_VERSION = 6;
   const GRAPH_FLOW_WIDTH = 8;
   const GRAPH_VIEWPORT_MIN_HEIGHT = 360;
   const GRAPH_VIEWPORT_BOTTOM_GAP = 18;
@@ -33,6 +33,7 @@
   let recipeCatalog = { materials: [], defaultEnabledRecipeIds: [], selectableRecipeIds: [] };
   const itemsByClass = new Map();
   const selectedRecipeIds = new Set();
+  const disabledRawMaterialClasses = new Set();
   const preferredPlanByTargetKey = new Map();
   const recipeNodePositions = new Map();
   let activeTab = "tree";
@@ -76,7 +77,7 @@
   window.PlannerDiagnostics.configure(() => ({
     targets: collectTargetState(),
     enabledRecipeIds: selectedRecipeIdsPayload(),
-    preferredPlan: preferredPlanPayload(),
+    disabledRawMaterialClasses: disabledRawMaterialClassesPayload(),
     recipeNodePositions: Array.from(recipeNodePositions.entries()),
     activeTab,
   }));
@@ -155,7 +156,8 @@
             rate: target.rate,
           })),
           enabledRecipeIds: selectedRecipeIdsPayload(),
-          preferredPlan: options.usePreferredPlan ? preferredPlanPayload() : [],
+          disabledRawMaterialClasses: disabledRawMaterialClassesPayload(),
+          preferredPlan: [],
         }),
       });
       calculationResult = result;
@@ -163,7 +165,7 @@
         handleRecipeExpansionRequired(result, targets);
         return;
       }
-      reconcilePreferredPlan(result);
+      storeCurrentPreferredPlan();
       lastServerResult = clonePlannerResult(result);
       lastServerTargets = targetSnapshotsFromTargets(targets);
       lastServerPlanSignature = planSignature();
@@ -284,14 +286,20 @@
     if (suppressStateSave) {
       return;
     }
+    storeCurrentPreferredPlan();
     const state = {
       selectionCacheVersion: SELECTION_CACHE_VERSION,
       targets: collectTargetState(),
       enabledRecipeIds: plannerReady
         ? selectedRecipeIdsPayload()
         : normalizedRecipeIdList(savedState.enabledRecipeIds),
+      disabledRawMaterialClasses: disabledRawMaterialClassesPayload(),
       savedTargetPlans,
       targetHistory,
+      preferredPlanByTarget: Array.from(preferredPlanByTargetKey.entries()).map(([key, plan]) => ({
+        key,
+        plan: normalizePreferredPlan(plan),
+      })),
       recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
         id,
         x: roundGraphCoordinate(position.x),
@@ -420,6 +428,9 @@
   function renderTargetPlanSelectors() {
     renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, "No saved plans", "Select a saved plan");
     renderTargetPlanPicker(historyPlanSelect, targetHistory, "No recent history", "Select a recent plan");
+    if (planLibrary instanceof HTMLElement) {
+      planLibrary.hidden = !savedTargetPlans.length && !targetHistory.length;
+    }
   }
 
   function renderTargetPlanPicker(picker, plans, emptyText, placeholderText) {
@@ -430,6 +441,10 @@
     const menu = picker.querySelector(".plan-picker-menu");
     if (!(button instanceof HTMLButtonElement) || !(menu instanceof HTMLElement)) {
       return;
+    }
+    const field = picker.closest(".plan-select-field");
+    if (field instanceof HTMLElement) {
+      field.hidden = !plans.length;
     }
     button.textContent = plans.length ? placeholderText : emptyText;
     button.disabled = !plans.length;
@@ -540,8 +555,8 @@
       selectableRecipeIds: Array.isArray(payload?.selectableRecipeIds) ? payload.selectableRecipeIds : [],
     };
     const selectable = new Set(recipeCatalog.selectableRecipeIds.map((id) => String(id || "").trim()).filter(Boolean));
-    const savedIds = Array.isArray(savedState.enabledRecipeIds) ? savedState.enabledRecipeIds : [];
-    const sourceIds = savedIds.length ? savedIds : recipeCatalog.defaultEnabledRecipeIds;
+    const hasSavedIds = Array.isArray(savedState.enabledRecipeIds);
+    const sourceIds = hasSavedIds ? savedState.enabledRecipeIds : recipeCatalog.defaultEnabledRecipeIds;
 
     selectedRecipeIds.clear();
     sourceIds.forEach((id) => {
@@ -550,17 +565,27 @@
         selectedRecipeIds.add(recipeId);
       }
     });
-    ensureDefaultRecipesSelected();
+    disabledRawMaterialClasses.clear();
+    (Array.isArray(savedState.disabledRawMaterialClasses) ? savedState.disabledRawMaterialClasses : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .forEach((itemClass) => disabledRawMaterialClasses.add(itemClass));
     updateRecipeFilterButton();
   }
 
   function selectedRecipeIdsPayload() {
-    ensureDefaultRecipesSelected();
     return Array.from(selectedRecipeIds).sort();
   }
 
+  function disabledRawMaterialClassesPayload() {
+    return Array.from(disabledRawMaterialClasses).sort();
+  }
+
   function recipeSelectionSignature() {
-    return selectedRecipeIdsPayload().join("|");
+    return [
+      selectedRecipeIdsPayload().join("|"),
+      disabledRawMaterialClassesPayload().join("|"),
+    ].join("::");
   }
 
   function updateRecipeFilterButton() {
@@ -577,35 +602,12 @@
     return normalizeRecipeIdSet(recipeCatalog.defaultEnabledRecipeIds);
   }
 
-  function lockedDefaultRecipeIdSet() {
-    const locked = new Set();
-    const defaults = defaultRecipeIdSet();
-    (recipeCatalog.materials || []).forEach((group) => {
-      const baseRecipeIds = (group.recipes || [])
-        .map((recipe) => String(recipe?.id || "").trim())
-        .filter((recipeId) => recipeId && defaults.has(recipeId));
-      if (baseRecipeIds.length === 1) {
-        locked.add(baseRecipeIds[0]);
-      }
-    });
-    return locked;
-  }
-
   function selectableRecipeIdList() {
     return normalizedRecipeIdList(recipeCatalog.selectableRecipeIds);
   }
 
   function selectableRecipeIdSet() {
     return new Set(selectableRecipeIdList());
-  }
-
-  function ensureDefaultRecipesSelected() {
-    const selectable = selectableRecipeIdSet();
-    lockedDefaultRecipeIdSet().forEach((recipeId) => {
-      if (selectable.has(recipeId)) {
-        selectedRecipeIds.add(recipeId);
-      }
-    });
   }
 
   function resetToDefaultRecipes() {
@@ -617,36 +619,31 @@
         selectedRecipeIds.add(recipeId);
       }
     });
-    ensureDefaultRecipesSelected();
+    disabledRawMaterialClasses.clear();
+    activePreferredPlan = [];
+    storeCurrentPreferredPlan();
   }
 
   function isDefaultRecipeId(recipeId) {
     return defaultRecipeIdSet().has(String(recipeId || "").trim());
   }
 
-  function isLockedDefaultRecipeId(recipeId) {
-    return lockedDefaultRecipeIdSet().has(String(recipeId || "").trim());
-  }
-
   function selectedOptionalRecipeCount() {
-    const locked = lockedDefaultRecipeIdSet();
     return selectableRecipeIdList()
-      .filter((recipeId) => !locked.has(recipeId) && selectedRecipeIds.has(recipeId))
+      .filter((recipeId) => !isDefaultRecipeId(recipeId) && selectedRecipeIds.has(recipeId))
       .length;
   }
 
   function isDefaultRecipeSelection() {
+    if (activePreferredPlan.length || disabledRawMaterialClasses.size) {
+      return false;
+    }
     const selectable = selectableRecipeIdSet();
     const defaults = defaultRecipeIdSet();
     if (selectedRecipeIds.size !== Array.from(defaults).filter((recipeId) => selectable.has(recipeId)).length) {
       return false;
     }
     return selectableRecipeIdList().every((recipeId) => selectedRecipeIds.has(recipeId) === defaults.has(recipeId));
-  }
-
-  function allSelectableRecipesSelected() {
-    const selectable = selectableRecipeIdList();
-    return Boolean(selectable.length) && selectable.every((recipeId) => selectedRecipeIds.has(recipeId));
   }
 
   function restoreTargetRows(targets) {
@@ -734,9 +731,11 @@
         return;
       }
       const scale = Number(typeof entry === "string" ? 0 : entry?.scale || 0);
-      byId.set(id, {
+      const materialClass = String(typeof entry === "string" ? "" : entry?.materialClass || "").trim();
+      byId.set(materialClass || id, {
         id,
         scale: Number.isFinite(scale) && scale > 0 ? roundPlannerNumber(scale) : 0,
+        ...(materialClass ? { materialClass } : {}),
       });
     });
     return Array.from(byId.values());
@@ -778,98 +777,6 @@
       .filter((target) => target.itemClass || target.itemName)
       .map((target) => target.itemClass || `name:${compact(target.itemName || "")}`)
       .join("|");
-  }
-
-  function preferredPlanPayload() {
-    return normalizePreferredPlan(activePreferredPlan);
-  }
-
-  function reconcilePreferredPlan(result) {
-    activePreferredPlan = normalizePreferredPlan(result?.preferredPlan || preferredPlanFromResult(result));
-    storeCurrentPreferredPlan();
-    savePlannerState();
-  }
-
-  function preferredPlanFromResult(result) {
-    return [
-      ...(result?.recipeRuns || []).map((run) => ({
-        id: String(run.id || run.recipe?.id || "").trim(),
-        scale: Number(run.scale || 0),
-      })),
-      ...(result?.rawTotals || []).map((raw) => ({
-        id: rawPlanNodeId(raw.item?.className),
-        scale: Number(raw.rate || 0),
-      })),
-    ].filter((entry) => entry.id);
-  }
-
-  function preferredPlanAfterSwitch(result, recipe, option) {
-    const plan = normalizePreferredPlan(activePreferredPlan.length ? activePreferredPlan : preferredPlanFromResult(result));
-    const sourceId = planNodeIdForSwitchRecipe(recipe);
-    const targetId = planNodeIdForOption(recipe, option);
-    if (!sourceId || !targetId) {
-      return plan;
-    }
-
-    const nextPlan = plan.filter((entry) => entry.id !== sourceId);
-    const targetScale = estimatePlanNodeScaleForOption(recipe, option);
-    const existing = nextPlan.find((entry) => entry.id === targetId);
-    if (existing) {
-      existing.scale = roundPlannerNumber(Math.max(Number(existing.scale || 0), targetScale));
-    } else {
-      nextPlan.push({ id: targetId, scale: roundPlannerNumber(targetScale) });
-    }
-    return normalizePreferredPlan(nextPlan);
-  }
-
-  function planNodeIdForSwitchRecipe(recipe) {
-    const id = String(recipe?.id || recipe?.selectedRecipeId || "").trim();
-    if (id && id !== DIRECT_RAW_RECIPE_ID) {
-      return id;
-    }
-    return rawPlanNodeId(recipe?.primaryOutput?.className);
-  }
-
-  function planNodeIdForOption(recipe, option) {
-    if (option?.isDirectRaw) {
-      return rawPlanNodeId(recipe?.primaryOutput?.className);
-    }
-    return String(option?.id || "").trim();
-  }
-
-  function rawPlanNodeId(itemClass) {
-    const cleanClass = String(itemClass || "").trim();
-    return cleanClass ? `${RAW_PLAN_NODE_PREFIX}${cleanClass}` : "";
-  }
-
-  function estimatePlanNodeScaleForOption(recipe, option) {
-    const primaryClass = String(recipe?.primaryOutput?.className || "").trim();
-    const desiredRate = currentPrimaryOutputRate(recipe, primaryClass);
-    if (option?.isDirectRaw) {
-      return desiredRate || Number(recipe?.currentScale || 0) || 1;
-    }
-
-    const outputPerScale = optionOutputRate(option, primaryClass);
-    if (desiredRate > 0 && outputPerScale > 0) {
-      return desiredRate / outputPerScale;
-    }
-    return Number(recipe?.currentScale || 0) || 1;
-  }
-
-  function currentPrimaryOutputRate(recipe, primaryClass) {
-    const output = (recipe?.currentOutputs || []).find((entry) => entry?.item?.className === primaryClass);
-    return Number(output?.rate || 0);
-  }
-
-  function optionOutputRate(option, primaryClass) {
-    const output = (option?.outputs || []).find((entry) => entry?.item?.className === primaryClass);
-    return Number(output?.rate || 0);
-  }
-
-  function recipeOptionName(source, recipeId) {
-    const id = String(recipeId || "").trim();
-    const option = (source?.replacementOptions || []).find((entry) => entry.id === id);
-    return option?.name || id;
   }
 
   function restoreRecipeNodePositions(positionEntries) {
@@ -928,19 +835,6 @@
     });
   }
 
-  function selectRecipeForOutput(recipe, option) {
-    activatePlanCacheForCurrentTargets();
-    const primaryOutput = recipe?.primaryOutput;
-    const recipeId = String(option?.id || "").trim();
-    if (!primaryOutput?.className || !recipeId) {
-      return;
-    }
-    activePreferredPlan = preferredPlanAfterSwitch(lastServerResult, recipe, option);
-    storeCurrentPreferredPlan();
-    savePlannerState();
-    recalculateIfTargetsExist({ usePreferredPlan: true });
-  }
-
   function recalculateIfTargetsExist(options = {}) {
     if (collectTargetState().some((target) => target.itemClass || target.itemName || target.rate)) {
       calculate(options);
@@ -951,49 +845,36 @@
     const fragment = targetTemplate.content.cloneNode(true);
     const row = fragment.querySelector(".target-row");
     const itemInput = row.querySelector(".item-input");
+    const itemInputBox = row.querySelector(".item-input-box");
     const amountInput = row.querySelector(".amount-input");
     const removeButton = row.querySelector(".remove-button");
-    const suggestions = row.querySelector(".suggestions");
-
-    row._suggestions = [];
-    row._activeIndex = -1;
 
     if (initialItem) {
       selectItem(row, initialItem);
     }
     amountInput.value = initialRate === "" ? "1" : initialRate;
 
-    itemInput.addEventListener("input", () => {
-      activatePlanCacheForCurrentTargets();
-      delete row.dataset.itemClass;
-      updateUnitLabel(row, null);
-      updateTargetItemIcon(row, null);
-      renderSuggestions(row, itemInput.value);
-      activatePlanCacheForCurrentTargets();
+    const openTargetMaterialPicker = async () => {
+      const selection = await window.MaterialPicker.open({
+        items,
+        title: "Choose Target Material",
+        description: "Choose the material your factory should produce.",
+        initialId: row.dataset.itemClass || "",
+        preferredCategory: "NormalMaterial",
+      });
+      if (!selection) return;
+      selectItem(row, selection.item);
+      amountInput.focus();
       savePlannerState();
+    };
+    itemInputBox.addEventListener("click", openTargetMaterialPicker);
+    itemInput.addEventListener("keydown", (event) => {
+      if (["Enter", " ", "ArrowDown"].includes(event.key)) {
+        event.preventDefault();
+        openTargetMaterialPicker();
+      }
     });
     amountInput.addEventListener("input", handleTargetAmountInput);
-    itemInput.addEventListener("focus", () => renderSuggestions(row, itemInput.value));
-    itemInput.addEventListener("keydown", (event) => handleSuggestionKeys(event, row));
-    itemInput.addEventListener("blur", () => {
-      window.setTimeout(() => closeSuggestions(row), 120);
-    });
-
-    suggestions.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-    });
-    suggestions.addEventListener("click", (event) => {
-      const option = event.target.closest(".suggestion-option");
-      if (!option) {
-        return;
-      }
-      const item = itemsByClass.get(option.dataset.itemClass);
-      if (item) {
-        selectItem(row, item);
-        amountInput.focus();
-        savePlannerState();
-      }
-    });
 
     removeButton.addEventListener("click", () => {
       activatePlanCacheForCurrentTargets();
@@ -1020,91 +901,17 @@
     });
   }
 
-  function renderSuggestions(row, query) {
-    const suggestions = row.querySelector(".suggestions");
-    const matches = searchItems(query).slice(0, 14);
-    row._suggestions = matches;
-    row._activeIndex = matches.length ? 0 : -1;
-    suggestions.replaceChildren();
-
-    if (!matches.length) {
-      closeSuggestions(row);
-      return;
-    }
-
-    matches.forEach((item, index) => {
-      const option = document.createElement("button");
-      option.type = "button";
-      option.className = `suggestion-option${index === row._activeIndex ? " active" : ""}`;
-      option.dataset.itemClass = item.className;
-      option.setAttribute("role", "option");
-
-      const name = document.createElement("span");
-      name.className = "suggestion-name";
-      name.textContent = item.name;
-      const main = document.createElement("span");
-      main.className = "suggestion-main";
-      main.append(makeMaterialIcon(item, "suggestion-icon"), name);
-
-      const meta = document.createElement("span");
-      meta.className = "suggestion-meta";
-      meta.textContent = itemListMetaText(item);
-
-      option.append(main, meta);
-      suggestions.appendChild(option);
-    });
-    suggestions.classList.add("open");
-  }
-
-  function closeSuggestions(row) {
-    row.querySelector(".suggestions").classList.remove("open");
-    row._activeIndex = -1;
-  }
-
-  function handleSuggestionKeys(event, row) {
-    const suggestionsOpen = row.querySelector(".suggestions").classList.contains("open");
-    if (!suggestionsOpen || !row._suggestions.length) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      row._activeIndex = (row._activeIndex + 1) % row._suggestions.length;
-      refreshActiveSuggestion(row);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      row._activeIndex = (row._activeIndex - 1 + row._suggestions.length) % row._suggestions.length;
-      refreshActiveSuggestion(row);
-    } else if (event.key === "Enter") {
-      const item = row._suggestions[row._activeIndex];
-      if (item) {
-        event.preventDefault();
-        selectItem(row, item);
-        row.querySelector(".amount-input").focus();
-        savePlannerState();
-      }
-    } else if (event.key === "Escape") {
-      closeSuggestions(row);
-    }
-  }
-
-  function refreshActiveSuggestion(row) {
-    const options = Array.from(row.querySelectorAll(".suggestion-option"));
-    options.forEach((option, index) => {
-      option.classList.toggle("active", index === row._activeIndex);
-      if (index === row._activeIndex) {
-        option.scrollIntoView({ block: "nearest" });
-      }
-    });
-  }
-
   function selectItem(row, item) {
     activatePlanCacheForCurrentTargets();
     row.dataset.itemClass = item.className;
     row.querySelector(".item-input").value = item.name;
+    row.querySelector(".item-input-box")?.classList.remove("invalid");
     updateUnitLabel(row, item);
     updateTargetItemIcon(row, item);
-    closeSuggestions(row);
+    row.dispatchEvent(new CustomEvent("materialselected", {
+      bubbles: true,
+      detail: { id: item.className, item },
+    }));
     activatePlanCacheForCurrentTargets();
   }
 
@@ -1118,43 +925,6 @@
       return;
     }
     setMaterialIconBackground(icon, item);
-  }
-
-  function searchItems(query) {
-    const trimmed = query.trim();
-    return items
-      .map((item) => ({ item, score: scoreItem(item, trimmed) }))
-      .filter((entry) => Number.isFinite(entry.score))
-      .sort((a, b) => {
-        if (a.score !== b.score) {
-          return a.score - b.score;
-        }
-        if (a.item.producible !== b.item.producible) {
-          return a.item.producible ? -1 : 1;
-        }
-        return a.item.name.localeCompare(b.item.name);
-      })
-      .map((entry) => entry.item);
-  }
-
-  function scoreItem(item, query) {
-    if (!query) {
-      return item.producible ? 20 : 80;
-    }
-    const itemName = normalize(item.name);
-    const itemCompact = compact(item.name);
-    const queryName = normalize(query);
-    const queryCompact = compact(query);
-    const className = normalize(item.className);
-
-    if (itemName === queryName) return 0;
-    if (itemName.startsWith(queryName)) return 1;
-    if (itemName.split(" ").some((part) => part.startsWith(queryName))) return 2;
-    if (itemCompact.startsWith(queryCompact)) return 3;
-    if (itemName.includes(queryName)) return 4;
-    if (itemCompact.includes(queryCompact)) return 5;
-    if (className.includes(queryName)) return 6;
-    return Infinity;
   }
 
   function collectTargets() {
@@ -1174,6 +944,7 @@
       const item = selectedRowItem(row);
       if (!item) {
         setStatus(`Unable to match item: ${rawName || "empty input"}`, true);
+        row.querySelector(".item-input-box")?.classList.add("invalid");
         itemInput.focus();
         return [];
       }
@@ -1222,7 +993,9 @@
 
     const scaledResult = scaledPlannerResult(lastServerResult, scaleFactor, currentTargets);
     renderPlannerResult(scaledResult, { preserveGraphViewport: true });
-    activePreferredPlan = normalizePreferredPlan(scaledResult.preferredPlan || preferredPlanFromResult(scaledResult));
+    activePreferredPlan = normalizePreferredPlan(
+      activePreferredPlan.map((entry) => ({ ...entry, scale: Number(entry.scale || 0) * scaleFactor })),
+    );
     storeCurrentPreferredPlan();
     lastServerPlanSignature = planSignature();
     if (options.updateStatus) {
@@ -1592,11 +1365,6 @@
       ],
       replacementOptions: options,
     };
-  }
-
-  function itemListMetaText(item) {
-    const category = materialCategoryText(item, item?.producible ? "" : "Raw material");
-    return category ? `${item.unit} · ${category}` : item.unit;
   }
 
   function materialCategoryText(item, fallback = "") {
@@ -2370,6 +2138,9 @@
     const switchRecipe = graphNodeSwitchRecipe(node);
     const hasRecipeFilterShortcut = node.type === "recipe";
     const hasSwitchButton = hasRecipeFilterShortcut || canSwitchRecipe(switchRecipe);
+    const recipeMaterial = hasRecipeFilterShortcut
+      ? ((node.recipe?.currentOutputs || [])[0]?.item || node.recipe?.primaryOutput)
+      : switchRecipe?.primaryOutput;
     const card = document.createElement("article");
     card.className = `graph-node ${node.type}${node.alternate ? " alternate" : ""}`;
     card.dataset.nodeId = node.id;
@@ -2408,20 +2179,11 @@
       switchButton.type = "button";
       switchButton.className = "switch-recipe-button";
       switchButton.textContent = "R";
-      switchButton.title = hasRecipeFilterShortcut ? "Show this recipe in the recipe filter" : "Switch the recipe used for this material";
-      switchButton.setAttribute(
-        "aria-label",
-        hasRecipeFilterShortcut
-          ? `Show ${node.recipe?.name || node.title} in the recipe filter`
-          : `Switch recipe for ${switchRecipe.primaryOutput?.name || switchRecipe.name || node.title}`,
-      );
+      switchButton.title = "Show this material in the recipe filter";
+      switchButton.setAttribute("aria-label", `Show recipes for ${recipeMaterial?.name || node.title}`);
       switchButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (hasRecipeFilterShortcut) {
-          openRecipeFilterDialog({ focusTarget: recipeFilterFocusFromGraphRecipe(node.recipe) });
-        } else {
-          openRecipeSwitchDialog(switchRecipe);
-        }
+        openRecipeFilterDialog({ materialClass: recipeMaterial?.className || "" });
       });
       card.appendChild(switchButton);
     }
@@ -2699,13 +2461,6 @@
     }
   }
 
-  function recipeFilterFocusFromGraphRecipe(recipe) {
-    const recipeId = String(recipe?.id || "").trim();
-    const firstOutput = (recipe?.currentOutputs || [])[0]?.item || recipe?.primaryOutput;
-    const materialClass = String(firstOutput?.className || "").trim();
-    return recipeId ? { recipeId, materialClass } : null;
-  }
-
   function normalizeRecipeFilterFocus(target) {
     const recipeId = String(target?.recipeId || "").trim();
     if (!recipeId) {
@@ -2723,9 +2478,8 @@
     const activeRecipeIdFilter = normalizeRecipeIdSet(options.filterRecipeIds || options.requiredRecipeIds);
     const hasRecipeIdFilter = activeRecipeIdFilter.size > 0;
     const noticeText = String(options.notice || "").trim();
-    let activeSelectedOnly = Boolean(options.selectedOnly);
+    let activeMaterialClass = String(options.materialClass || "").trim();
     const expansionState = new Map();
-    let selectedOnlyReturnState = null;
 
     const overlay = document.createElement("div");
     overlay.className = "recipe-filter-overlay";
@@ -2739,6 +2493,8 @@
     dialog.className = "recipe-filter-dialog";
     dialog.setAttribute("role", "dialog");
     dialog.setAttribute("aria-modal", "true");
+    const titleId = `recipe-filter-title-${Date.now()}`;
+    dialog.setAttribute("aria-labelledby", titleId);
 
     const dragHandle = document.createElement("div");
     dragHandle.className = "recipe-filter-drag-handle";
@@ -2754,6 +2510,7 @@
     const titleWrap = document.createElement("div");
     titleWrap.className = "recipe-filter-title";
     const title = document.createElement("h3");
+    title.id = titleId;
     title.textContent = hasRecipeIdFilter ? "Required Recipes" : "Recipe Filter";
     titleWrap.appendChild(title);
     if (noticeText) {
@@ -2778,23 +2535,21 @@
     search.className = "recipe-filter-search";
     search.type = "search";
     search.placeholder = hasRecipeIdFilter ? "Search required recipes" : "Search materials or recipes";
+    const materialButton = document.createElement("button");
+    materialButton.type = "button";
+    materialButton.className = "secondary-button recipe-material-picker-button";
+    materialButton.textContent = "Choose Material";
+    const clearMaterialButton = document.createElement("button");
+    clearMaterialButton.type = "button";
+    clearMaterialButton.className = "secondary-button";
+    clearMaterialButton.textContent = "Clear Material";
+    clearMaterialButton.hidden = true;
     const defaultButton = document.createElement("button");
     defaultButton.type = "button";
     defaultButton.className = "secondary-button";
     defaultButton.dataset.recipeFilterAction = "clear-alternates";
     defaultButton.textContent = "Reset All";
-    const selectedOnlyButton = document.createElement("button");
-    selectedOnlyButton.type = "button";
-    selectedOnlyButton.className = "secondary-button recipe-filter-toggle";
-    selectedOnlyButton.dataset.recipeFilterAction = "selected-only";
-    selectedOnlyButton.textContent = "Selected Only";
-    selectedOnlyButton.setAttribute("aria-pressed", String(activeSelectedOnly));
-    const allButton = document.createElement("button");
-    allButton.type = "button";
-    allButton.className = "secondary-button";
-    allButton.dataset.recipeFilterAction = "select-all";
-    allButton.textContent = "Select All";
-    tools.append(search, defaultButton, allButton, selectedOnlyButton);
+    tools.append(search, materialButton, clearMaterialButton, defaultButton);
 
     const list = document.createElement("div");
     list.className = "recipe-filter-list";
@@ -2821,54 +2576,39 @@
       renderCurrentRecipeFilterList();
       refreshRecipeFilterControls();
     });
-    selectedOnlyButton.addEventListener("click", () => {
-      if (!activeSelectedOnly) {
-        captureRecipeFilterExpansionState(list, expansionState);
-        selectedOnlyReturnState = {
-          expansionState: new Map(expansionState),
-          scrollTop: list.scrollTop,
-        };
-      }
-      activeSelectedOnly = !activeSelectedOnly;
-      selectedOnlyButton.classList.toggle("active", activeSelectedOnly);
-      selectedOnlyButton.setAttribute("aria-pressed", String(activeSelectedOnly));
-      activeFocusTarget = null;
-      if (activeSelectedOnly) {
-        renderCurrentRecipeFilterList({ preserveExpansion: false });
-        return;
-      }
-      if (selectedOnlyReturnState) {
-        expansionState.clear();
-        selectedOnlyReturnState.expansionState.forEach((open, materialClass) => {
-          expansionState.set(materialClass, open);
-        });
-      }
-      renderCurrentRecipeFilterList({
-        preserveExpansion: false,
-        restoreScrollTop: selectedOnlyReturnState?.scrollTop ?? 0,
+    materialButton.addEventListener("click", async () => {
+      const recipeMaterialIds = new Set(recipeCatalog.materials.map((group) => group.item?.className).filter(Boolean));
+      const selection = await window.MaterialPicker.open({
+        items,
+        filter: (item) => recipeMaterialIds.has(item.className),
+        title: "Choose Material for Recipe Search",
+        description: "Select a material to show its available recipes.",
+        initialId: activeMaterialClass,
       });
-      selectedOnlyReturnState = null;
+      if (!selection) return;
+      activeMaterialClass = selection.id;
+      activeFocusTarget = { materialClass: selection.id };
+      search.value = "";
+      refreshMaterialFilterControls();
+      renderCurrentRecipeFilterList({ preserveExpansion: false });
     });
-    allButton.addEventListener("click", () => {
-      if (isRecipeFilterControlDisabled(allButton)) {
-        return;
-      }
-      recipeCatalog.selectableRecipeIds.forEach((id) => selectedRecipeIds.add(id));
-      ensureDefaultRecipesSelected();
-      savePlannerState();
-      updateRecipeFilterButton();
-      renderCurrentRecipeFilterList();
-      refreshRecipeFilterControls();
+    clearMaterialButton.addEventListener("click", () => {
+      activeMaterialClass = "";
+      activeFocusTarget = null;
+      refreshMaterialFilterControls();
+      renderCurrentRecipeFilterList({ preserveExpansion: false });
     });
     search.addEventListener("input", () => {
       activeFocusTarget = null;
+      activeMaterialClass = "";
+      refreshMaterialFilterControls();
       renderCurrentRecipeFilterList({ preserveExpansion: false });
     });
 
     dialog.append(dragHandle, header, tools, list, footer);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
-    selectedOnlyButton.classList.toggle("active", activeSelectedOnly);
+    refreshMaterialFilterControls();
     renderCurrentRecipeFilterList({ preserveExpansion: false });
     refreshRecipeFilterControls();
     try {
@@ -2887,8 +2627,8 @@
         summary,
         activeFocusTarget,
         activeRecipeIdFilter,
-        activeSelectedOnly,
         expansionState,
+        activeMaterialClass,
       );
       if (Number.isFinite(options.restoreScrollTop)) {
         const scrollTop = Math.max(0, Number(options.restoreScrollTop));
@@ -2897,11 +2637,27 @@
         });
       }
     }
+
+    function refreshMaterialFilterControls() {
+      const selectedItem = itemsByClass.get(activeMaterialClass);
+      materialButton.textContent = selectedItem ? `Material: ${selectedItem.name}` : "Choose Material";
+      materialButton.classList.toggle("active", Boolean(selectedItem));
+      clearMaterialButton.hidden = !selectedItem;
+    }
   }
 
   function closeRecipeFilterDialog() {
     activeRecipeFilterDrag = null;
-    document.querySelector(".recipe-filter-overlay")?.remove();
+    const overlay = document.querySelector(".recipe-filter-overlay");
+    if (!overlay) {
+      return;
+    }
+    const shouldRefreshDisplayedPlan = Boolean(lastServerResult)
+      && planSignature() !== lastServerPlanSignature;
+    overlay.remove();
+    if (shouldRefreshDisplayedPlan) {
+      calculate();
+    }
   }
 
   function refreshRecipeFilterControls() {
@@ -2913,11 +2669,6 @@
       overlay.querySelector('[data-recipe-filter-action="clear-alternates"]'),
       isDefaultRecipeSelection(),
       "All default recipes are already selected and no optional recipes are selected.",
-    );
-    setRecipeFilterControlDisabled(
-      overlay.querySelector('[data-recipe-filter-action="select-all"]'),
-      allSelectableRecipesSelected(),
-      "All recipes are already selected.",
     );
   }
 
@@ -3019,19 +2770,22 @@
     });
   }
 
-  function groupHasSelectedAlternateRecipe(group, recipes = null) {
+  function groupHasModifiedRecipeSelection(group, recipes = null) {
     const source = Array.isArray(recipes) ? recipes : group?.recipes;
-    return (source || []).some((recipe) => isSelectedOptionalRecipe(recipe));
-  }
-
-  function isSelectedOptionalRecipe(recipe) {
-    const recipeId = String(recipe?.id || "").trim();
-    return Boolean(recipeId) && selectedRecipeIds.has(recipeId) && !isLockedDefaultRecipeId(recipeId);
+    const recipeSelectionChanged = (source || []).some((recipe) => {
+      const recipeId = String(recipe?.id || "").trim();
+      return Boolean(recipeId)
+        && selectedRecipeIds.has(recipeId) !== isDefaultRecipeId(recipeId);
+    });
+    const materialClass = String(group?.item?.className || "").trim();
+    const directRawSelectionChanged = isRawMaterialGroup(group)
+      && disabledRawMaterialClasses.has(materialClass);
+    return recipeSelectionChanged || directRawSelectionChanged;
   }
 
   function recipeFilterGroupOpen(group, recipes, context) {
     const materialClass = String(group?.item?.className || "").trim();
-    if (context.selectedOnly || context.hasExactRecipeFilter || Boolean(context.query)) {
+    if (context.materialClassFilter || context.hasExactRecipeFilter || Boolean(context.query)) {
       return true;
     }
     if (context.normalizedFocusTarget?.materialClass && materialClass === context.normalizedFocusTarget.materialClass) {
@@ -3040,11 +2794,10 @@
     if (context.expansionState instanceof Map && context.expansionState.has(materialClass)) {
       return Boolean(context.expansionState.get(materialClass));
     }
-    return groupHasSelectedAlternateRecipe(group, recipes);
+    return groupHasModifiedRecipeSelection(group, recipes);
   }
 
-  function renderRecipeFilterList(list, rawQuery, summary, focusTarget = null, recipeIdFilter = null, selectedOnly = false, expansionState = null) {
-    ensureDefaultRecipesSelected();
+  function renderRecipeFilterList(list, rawQuery, summary, focusTarget = null, recipeIdFilter = null, expansionState = null, materialClassFilter = "") {
     const query = normalize(rawQuery);
     const normalizedFocusTarget = normalizeRecipeFilterFocus(focusTarget);
     const exactRecipeIds = recipeIdFilter instanceof Set ? recipeIdFilter : normalizeRecipeIdSet(recipeIdFilter);
@@ -3055,28 +2808,49 @@
     let focusedRow = null;
     let fallbackFocusedRow = null;
 
-    recipeCatalog.materials.forEach((group) => {
-      const recipes = (group.recipes || []).filter((recipe) => (
-        (!hasExactRecipeFilter || exactRecipeIds.has(recipe.id))
-        && (!selectedOnly || isSelectedOptionalRecipe(recipe))
-        && recipeMatchesQuery(group, recipe, query)
+    const visibleGroups = recipeCatalog.materials
+      .map((group, catalogIndex) => {
+        const groupMaterialClass = String(group.item?.className || "").trim();
+        if (materialClassFilter && groupMaterialClass !== materialClassFilter) {
+          return null;
+        }
+        const recipes = (group.recipes || []).filter((recipe) => (
+          (!hasExactRecipeFilter || exactRecipeIds.has(recipe.id))
+          && recipeMatchesQuery(group, recipe, query)
+        ));
+        if (!recipes.length) {
+          return null;
+        }
+        return {
+          group,
+          recipes,
+          catalogIndex,
+          modified: groupHasModifiedRecipeSelection(group),
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => (
+        Number(right.modified) - Number(left.modified)
+        || left.catalogIndex - right.catalogIndex
       ));
-      if (!recipes.length) {
-        return;
-      }
+
+    visibleGroups.forEach(({ group, recipes, modified }) => {
+      const groupMaterialClass = String(group.item?.className || "").trim();
+      const hasDirectRawRecipe = isRawMaterialGroup(group);
+      const displayedRecipeCount = recipes.length + (hasDirectRawRecipe ? 1 : 0);
       visibleMaterialCount += 1;
-      visibleRecipeCount += recipes.length;
+      visibleRecipeCount += displayedRecipeCount;
 
       const details = document.createElement("details");
       details.className = "recipe-material-group";
-      const groupMaterialClass = String(group.item?.className || "").trim();
+      details.classList.toggle("modified", modified);
       details.dataset.materialClass = groupMaterialClass;
       details.open = recipeFilterGroupOpen(group, recipes, {
         expansionState,
         hasExactRecipeFilter,
         normalizedFocusTarget,
         query,
-        selectedOnly,
+        materialClassFilter,
       });
 
       const groupSummary = document.createElement("summary");
@@ -3089,16 +2863,25 @@
       );
       const meta = document.createElement("span");
       meta.className = "recipe-material-meta";
-      meta.textContent = `${formatInteger(recipes.length)} recipe(s) · ${group.materialCategory || ""}`;
+      meta.textContent = `${formatInteger(displayedRecipeCount)} recipe(s) · ${group.materialCategory || ""}`;
       groupSummary.append(name, meta);
       details.appendChild(groupSummary);
+
+      if (hasDirectRawRecipe) {
+        details.appendChild(renderDirectRawBaseRecipeRow(group, {
+          onSelectionChange: () => {
+            captureRecipeFilterExpansionState(list, expansionState);
+            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, expansionState, materialClassFilter);
+          },
+        }));
+      }
 
       recipes.forEach((recipe) => {
         const row = renderRecipeFilterRow(recipe, group, {
           required: hasExactRecipeFilter && exactRecipeIds.has(recipe.id),
           onSelectionChange: () => {
             captureRecipeFilterExpansionState(list, expansionState);
-            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, selectedOnly, expansionState);
+            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, expansionState, materialClassFilter);
           },
         });
         if (normalizedFocusTarget?.recipeId && recipe.id === normalizedFocusTarget.recipeId) {
@@ -3129,60 +2912,109 @@
       list.replaceChildren(makeEmptyMessage("No matching recipes."));
     }
     if (summary) {
-      summary.textContent = hasExactRecipeFilter
+      const materialFilterItem = itemsByClass.get(materialClassFilter);
+      summary.textContent = materialFilterItem
+        ? `${materialFilterItem.name} · ${formatInteger(visibleRecipeCount)} recipe row(s) · ${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected`
+        : hasExactRecipeFilter
         ? `${formatInteger(visibleRecipeCount)} row(s) for ${formatInteger(exactRecipeIds.size)} required recipe(s) · ${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected`
-        : `${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected · ${formatInteger(visibleMaterialCount)} material(s), ${formatInteger(visibleRecipeCount)} ${selectedOnly ? "selected " : ""}visible recipe row(s)`;
+        : `${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected · ${formatInteger(visibleMaterialCount)} material(s), ${formatInteger(visibleRecipeCount)} visible recipe row(s)`;
     }
   }
 
-  function renderRecipeFilterRow(recipe, group, options = {}) {
-    const row = document.createElement("label");
-    row.className = "recipe-row";
-    const isDefaultRecipe = isDefaultRecipeId(recipe.id);
-    const isLockedDefaultRecipe = isLockedDefaultRecipeId(recipe.id);
-    if (options.required) {
-      row.classList.add("required");
-    }
-    if (isLockedDefaultRecipe) {
-      row.classList.add("base-locked");
-      row.title = "Base recipes are always enabled.";
-    }
-    row.dataset.recipeId = recipe.id || "";
-    row.dataset.materialClass = group?.item?.className || "";
+  function isRawMaterialGroup(group) {
+    return String(group?.materialCategory || group?.item?.materialCategory || "").trim() === "RawMaterial";
+  }
 
+  function renderDirectRawBaseRecipeRow(group, options = {}) {
+    const itemClass = String(group?.item?.className || "").trim();
+    const row = document.createElement("div");
+    row.className = "recipe-row base-recipe direct-raw-base-recipe";
+    row.dataset.materialClass = itemClass;
+    row.dataset.recipeId = `${DIRECT_RAW_RECIPE_ID}:${itemClass}`;
+
+    const checkboxLabel = document.createElement("label");
+    checkboxLabel.className = "recipe-row-selection";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.className = "recipe-filter-checkbox";
-    checkbox.dataset.recipeId = recipe.id;
-    checkbox.checked = isLockedDefaultRecipe || selectedRecipeIds.has(recipe.id);
-    checkbox.disabled = isLockedDefaultRecipe;
-    if (isLockedDefaultRecipe) {
-      checkbox.title = "Base recipes are always enabled.";
-    }
+    checkbox.className = "recipe-filter-checkbox direct-raw-checkbox";
+    checkbox.checked = !disabledRawMaterialClasses.has(itemClass);
+    checkbox.setAttribute("aria-label", `Use ${group.item?.name || itemClass} directly as a raw material`);
     checkbox.addEventListener("change", () => {
-      setRecipeSelected(recipe.id, checkbox.checked);
+      if (checkbox.checked) {
+        disabledRawMaterialClasses.delete(itemClass);
+      } else {
+        disabledRawMaterialClasses.add(itemClass);
+      }
+      savePlannerState();
+      refreshRecipeFilterControls();
       options.onSelectionChange?.();
     });
+    checkboxLabel.appendChild(checkbox);
 
     const body = document.createElement("div");
     const name = document.createElement("div");
     name.className = "recipe-row-name";
     const recipeTag = document.createElement("span");
     recipeTag.className = "recipe-row-tag";
-    recipeTag.textContent = "[Recipe]";
+    recipeTag.textContent = "[Base Recipe]";
+    name.append(recipeTag, document.createTextNode(`Use ${group.item?.name || itemClass} Directly`));
+    const meta = document.createElement("div");
+    meta.className = "recipe-row-meta";
+    meta.textContent = "primary · base · raw source";
+    const formula = document.createElement("div");
+    formula.className = "recipe-row-formula";
+    const selfIngredient = [{ item: group.item, rate: 1 }];
+    formula.append(renderRecipeSide(selfIngredient), document.createTextNode(" = "), renderRecipeSide(selfIngredient));
+    body.append(name, meta, formula);
+    row.append(checkboxLabel, body);
+    return row;
+  }
+
+  function renderRecipeFilterRow(recipe, group, options = {}) {
+    const row = document.createElement("div");
+    row.className = "recipe-row";
+    const isDefaultRecipe = isDefaultRecipeId(recipe.id);
+    if (options.required) {
+      row.classList.add("required");
+    }
+    if (isDefaultRecipe) {
+      row.classList.add("base-recipe");
+    }
+    row.dataset.recipeId = recipe.id || "";
+    row.dataset.materialClass = group?.item?.className || "";
+
+    const checkboxLabel = document.createElement("label");
+    checkboxLabel.className = "recipe-row-selection";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "recipe-filter-checkbox";
+    checkbox.dataset.recipeId = recipe.id;
+    checkbox.checked = selectedRecipeIds.has(recipe.id);
+    checkbox.addEventListener("change", () => {
+      setRecipeSelected(recipe.id, checkbox.checked);
+      options.onSelectionChange?.();
+    });
+    checkboxLabel.appendChild(checkbox);
+
+    const body = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "recipe-row-name";
+    const recipeTag = document.createElement("span");
+    recipeTag.className = "recipe-row-tag";
+    recipeTag.textContent = isDefaultRecipe ? "[Base Recipe]" : "[Recipe]";
     name.append(recipeTag, document.createTextNode(recipe.name || recipe.id));
     const meta = document.createElement("div");
     meta.className = "recipe-row-meta";
     meta.textContent = [
       recipe.relation === "byproduct" ? "byproduct" : "primary",
-      recipe.isAlternate ? "alternate" : "base",
+      isDefaultRecipe ? "base" : recipe.isAlternate ? "alternate" : "additional",
       ...(recipe.flags || []),
     ].filter(Boolean).join(" · ");
     const formula = document.createElement("div");
     formula.className = "recipe-row-formula";
     formula.append(renderRecipeSide(recipe.inputs), document.createTextNode(" = "), renderRecipeSide(recipe.outputs));
     body.append(name, meta, formula);
-    row.append(checkbox, body);
+    row.append(checkboxLabel, body);
     return row;
   }
 
@@ -3190,21 +3022,13 @@
     if (!recipeId) {
       return;
     }
-    if (!selected && isLockedDefaultRecipeId(recipeId)) {
-      selectedRecipeIds.add(recipeId);
-      document.querySelectorAll(".recipe-filter-checkbox").forEach((checkbox) => {
-        if (checkbox.dataset.recipeId === recipeId) {
-          checkbox.checked = true;
-        }
-      });
-      return;
-    }
     if (selected) {
       selectedRecipeIds.add(recipeId);
     } else {
       selectedRecipeIds.delete(recipeId);
+      activePreferredPlan = activePreferredPlan.filter((entry) => entry.id !== recipeId);
+      storeCurrentPreferredPlan();
     }
-    ensureDefaultRecipesSelected();
     document.querySelectorAll(".recipe-filter-checkbox").forEach((checkbox) => {
       if (checkbox.dataset.recipeId === recipeId) {
         checkbox.checked = selectedRecipeIds.has(recipeId);
@@ -3266,93 +3090,6 @@
 
   function canSwitchRecipe(recipe) {
     return Array.isArray(recipe?.replacementOptions) && recipe.replacementOptions.length > 1;
-  }
-
-  function openRecipeSwitchDialog(recipe) {
-    if (!canSwitchRecipe(recipe)) {
-      return;
-    }
-    closeRecipeSwitchDialog();
-
-    const overlay = document.createElement("div");
-    overlay.className = "recipe-switch-overlay";
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        closeRecipeSwitchDialog();
-      }
-    });
-
-    const dialog = document.createElement("section");
-    dialog.className = "recipe-switch-dialog";
-    dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-modal", "true");
-
-    const header = document.createElement("div");
-    header.className = "recipe-switch-header";
-
-    const title = document.createElement("h3");
-    title.textContent = `Switch recipe for ${recipe.primaryOutput.name || recipe.primaryOutput.className}`;
-
-    const closeButton = document.createElement("button");
-    closeButton.type = "button";
-    closeButton.className = "recipe-switch-close";
-    closeButton.textContent = "\u00d7";
-    closeButton.setAttribute("aria-label", "Close");
-    closeButton.addEventListener("click", closeRecipeSwitchDialog);
-
-    header.append(title, closeButton);
-    dialog.appendChild(header);
-
-    const list = document.createElement("div");
-    list.className = "recipe-switch-list";
-    const currentRecipeId = String(recipe.id || recipe.selectedRecipeId || recipe.defaultRecipeId || "").trim();
-    recipe.replacementOptions.forEach((option) => {
-      const optionButton = document.createElement("button");
-      optionButton.type = "button";
-      optionButton.className = `recipe-switch-option${option.id === currentRecipeId ? " current" : ""}`;
-      if (option.id === currentRecipeId) {
-        optionButton.disabled = true;
-      }
-
-      const name = document.createElement("span");
-      name.className = "recipe-switch-name";
-      name.textContent = option.name || option.id;
-
-      const formula = document.createElement("span");
-      formula.className = "recipe-switch-formula";
-      formula.textContent = recipeOptionFormula(option);
-
-      optionButton.append(name, formula);
-      optionButton.addEventListener("click", () => {
-        closeRecipeSwitchDialog();
-        selectRecipeForOutput(recipe, option);
-      });
-      list.appendChild(optionButton);
-    });
-    dialog.appendChild(list);
-
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-  }
-
-  function closeRecipeSwitchDialog() {
-    document.querySelector(".recipe-switch-overlay")?.remove();
-  }
-
-  function recipeOptionFormula(option) {
-    if (option?.isDirectRaw) {
-      return "Use directly as external input";
-    }
-    return `${recipeOptionSide(option.inputs)} = ${recipeOptionSide(option.outputs)}`;
-  }
-
-  function recipeOptionSide(items) {
-    if (!Array.isArray(items) || !items.length) {
-      return "None";
-    }
-    return items
-      .map((item) => `${item.item?.name || ""} (${formatNumber(item.rate)})`)
-      .join(" + ");
   }
 
   function bindGraphPan(viewport) {
@@ -3821,9 +3558,11 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = "table-switch-recipe-button";
-      button.textContent = "Change Recipe";
-      button.setAttribute("aria-label", `Switch recipe for ${switchRecipe.primaryOutput?.name || row.item?.name || ""}`);
-      button.addEventListener("click", () => openRecipeSwitchDialog(switchRecipe));
+      button.textContent = "Recipes";
+      button.setAttribute("aria-label", `Show recipes for ${switchRecipe.primaryOutput?.name || row.item?.name || ""}`);
+      button.addEventListener("click", () => openRecipeFilterDialog({
+        materialClass: switchRecipe.primaryOutput?.className || row.item?.className || "",
+      }));
       cell.appendChild(button);
     }
 

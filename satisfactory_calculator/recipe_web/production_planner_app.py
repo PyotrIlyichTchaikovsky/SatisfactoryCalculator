@@ -394,7 +394,9 @@ class ProductionPlannerApp:
             asyncio.to_thread(
                 self.planner.plan,
                 payload.get("targets", []),
+                selected_recipes=payload.get("selectedRecipes"),
                 enabled_recipe_ids=payload.get("enabledRecipeIds"),
+                disabled_raw_material_classes=payload.get("disabledRawMaterialClasses"),
                 preferred_plan=payload.get("preferredPlan"),
             )
         )
@@ -615,6 +617,8 @@ def cache_control_for_static(file_path: Path) -> str:
 def plan_cache_key(payload: JsonDict) -> str:
     targets = payload.get("targets", [])
     enabled_recipe_ids = payload.get("enabledRecipeIds")
+    disabled_raw_material_classes = payload.get("disabledRawMaterialClasses")
+    selected_recipes = payload.get("selectedRecipes")
     preferred_plan = payload.get("preferredPlan")
     normalized_targets = []
     if isinstance(targets, list):
@@ -634,6 +638,11 @@ def plan_cache_key(payload: JsonDict) -> str:
     normalized_enabled_recipe_ids = enabled_recipe_ids
     if isinstance(enabled_recipe_ids, list):
         normalized_enabled_recipe_ids = sorted(str(value or "").strip() for value in enabled_recipe_ids)
+    normalized_disabled_raw_material_classes = disabled_raw_material_classes
+    if isinstance(disabled_raw_material_classes, list):
+        normalized_disabled_raw_material_classes = sorted(
+            str(value or "").strip() for value in disabled_raw_material_classes
+        )
     normalized_preferred_plan = preferred_plan
     if isinstance(preferred_plan, list):
         normalized_preferred_plan = []
@@ -651,6 +660,8 @@ def plan_cache_key(payload: JsonDict) -> str:
         {
             "targets": normalized_targets,
             "enabledRecipeIds": normalized_enabled_recipe_ids,
+            "disabledRawMaterialClasses": normalized_disabled_raw_material_classes,
+            "selectedRecipes": selected_recipes,
             "preferredPlan": normalized_preferred_plan,
         },
         ensure_ascii=False,
