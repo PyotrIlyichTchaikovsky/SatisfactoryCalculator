@@ -38,6 +38,9 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
       if(!response?.ok()) return '';
       return await page.locator('#releaseLabel').textContent().catch(()=> '');
     },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate HTML'}).toBe(expectedLabel);
+    await page.waitForLoadState('load');
+    failures.length=0;
+    response=await page.reload({waitUntil:'load'});
   } else {
     response=await page.goto('/');
   }
