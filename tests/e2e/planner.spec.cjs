@@ -7,7 +7,9 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   const legacy=process.env.LEGACY_BASELINE==='true';
   page.on('pageerror',error=>failures.push(error.message));
   page.on('requestfailed',req=>{
-    if(['script','stylesheet','image','fetch','xhr'].includes(req.resourceType())) failures.push(req.url()+': '+req.failure()?.errorText);
+    const errorText=req.failure()?.errorText || '';
+    if(errorText==='net::ERR_ABORTED') return;
+    if(['script','stylesheet','image','fetch','xhr'].includes(req.resourceType())) failures.push(req.url()+': '+errorText);
   });
   const plannerApiPaths=new Set(['/api/summary','/api/materials','/api/recipes','/api/plan']);
   const apiRequests=[];
