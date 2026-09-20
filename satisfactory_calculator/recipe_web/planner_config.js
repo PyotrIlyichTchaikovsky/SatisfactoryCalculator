@@ -6,6 +6,7 @@ window.PLANNER_CONFIG = Object.assign(
     sentryRelease: "",
     adsenseClient: "",
     adsenseEnabled: false,
+    localizationAssets: {},
   },
   window.PLANNER_CONFIG || {},
 );

@@ -123,7 +123,7 @@ def validate_candidate(candidate, config):
 
 
 def verify_manifest(actual, expected, environment):
-    for key in ("sha", "releaseId", "version", "applicationDigest", "dataVersion"):
+    for key in ("sha", "releaseId", "version", "applicationDigest", "dataVersion", "localizationVersion"):
         require(actual.get(key) == expected.get(key), f"Deployed frontend {key} mismatch")
     require(actual.get("environment") == environment, "Deployed frontend environment mismatch")
 
@@ -407,7 +407,8 @@ def main():
         candidate = {"schema": 1, "sha": os.environ["GITHUB_SHA"], "releaseId": os.environ["RELEASE_ID"],
                      "version": os.environ["RELEASE_VERSION"],
                      "image": os.environ["CANDIDATE_IMAGE"], "applicationDigest": build_frontend.application_digest(),
-                     "dataVersion": hashlib.sha256((build_frontend.SOURCE_DIR / "data/Data.xlsx").read_bytes()).hexdigest()[:16]}
+                     "dataVersion": hashlib.sha256((build_frontend.SOURCE_DIR / "data/Data.xlsx").read_bytes()).hexdigest()[:16],
+                     "localizationVersion": build_frontend.localization_digest()}
         validate_candidate(candidate, config)
         write_json(args.candidate, candidate)
     elif args.command == "prepare":

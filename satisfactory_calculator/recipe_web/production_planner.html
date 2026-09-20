@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-US">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,6 +7,7 @@
   <title>Satisfactory Production Planner</title>
   <link rel="stylesheet" href="production_planner.css?v=layout-median-barycentric-20260622-1">
   <script defer src="planner_config.js?v=cloud-deploy-20260624-1"></script>
+  <script defer src="planner_i18n.js"></script>
   <script defer src="planner_diagnostics.js"></script>
   <script defer src="material_picker.js"></script>
   <script defer src="production_planner.js?v=layout-median-barycentric-20260622-1"></script>
@@ -14,33 +15,39 @@
 <body>
   <header class="app-header">
     <div>
-      <h1>Satisfactory Production Planner</h1>
+      <h1 data-i18n="app.title">Satisfactory Production Planner</h1>
       <p id="monitoringTestStatus" role="status" hidden></p>
-      <p id="dataSummary">Connecting to production planner service...</p>
+      <p id="dataSummary" data-i18n="app.connecting">Connecting to production planner service...</p>
     </div>
+    <label class="language-field" for="languageSelect">
+      <span data-i18n="language.label">Language</span>
+      <select id="languageSelect" aria-label="Language" data-i18n-aria-label="language.label">
+        <option value="auto">Auto</option>
+      </select>
+    </label>
   </header>
 
   <main class="app-shell">
     <section class="input-panel" aria-labelledby="targetHeading">
       <div class="panel-title-row">
-        <h2 id="targetHeading">Production Targets</h2>
+        <h2 id="targetHeading" data-i18n="targets.title">Production Targets</h2>
         <div class="panel-actions">
-          <button id="recipeFilterButton" class="secondary-button" type="button" disabled>Recipe Filter</button>
+          <button id="recipeFilterButton" class="secondary-button" type="button" disabled data-i18n="recipes.filter">Recipe Filter</button>
         </div>
       </div>
 
       <div class="plan-library" aria-label="Saved and recent target plans">
         <div class="plan-select-field">
-          <span>Saved Plans</span>
+          <span data-i18n="targets.saved">Saved Plans</span>
           <div id="savedPlanSelect" class="plan-picker">
-            <button class="plan-picker-button" type="button" disabled>No saved plans</button>
+            <button class="plan-picker-button" type="button" disabled data-i18n="targets.noSaved">No saved plans</button>
             <div class="plan-picker-menu" role="listbox" hidden></div>
           </div>
         </div>
         <div class="plan-select-field">
-          <span>Recent History</span>
+          <span data-i18n="targets.history">Recent History</span>
           <div id="historyPlanSelect" class="plan-picker">
-            <button class="plan-picker-button" type="button" disabled>No recent history</button>
+            <button class="plan-picker-button" type="button" disabled data-i18n="targets.noHistory">No recent history</button>
             <div class="plan-picker-menu" role="listbox" hidden></div>
           </div>
         </div>
@@ -49,62 +56,62 @@
       <form id="plannerForm" autocomplete="off" novalidate>
         <div id="targetRows" class="target-rows"></div>
         <div class="form-actions">
-          <button id="addTargetButton" class="secondary-button add-target-button" type="button" title="Add item" aria-label="Add item">+</button>
-          <button id="savePlanButton" class="secondary-button" type="button">Save</button>
-          <button id="calculateButton" class="primary-button" type="submit" disabled>Calculate</button>
+          <button id="addTargetButton" class="secondary-button add-target-button" type="button" title="Add item" aria-label="Add item" data-i18n-title="targets.add" data-i18n-aria-label="targets.add">+</button>
+          <button id="savePlanButton" class="secondary-button" type="button" data-i18n="targets.save">Save</button>
+          <button id="calculateButton" class="primary-button" type="submit" disabled data-i18n="targets.calculate">Calculate</button>
         </div>
       </form>
     </section>
 
     <section class="result-panel" aria-labelledby="resultHeading">
       <div class="result-toolbar">
-        <h2 id="resultHeading">Results</h2>
+        <h2 id="resultHeading" data-i18n="results.title">Results</h2>
         <div class="result-actions">
-          <button id="reportProblemButton" class="secondary-button compact-button" type="button">Report a problem</button>
-          <button id="resetLayoutButton" class="secondary-button compact-button" type="button">Reset Layout</button>
-          <div class="tabs" role="tablist" aria-label="Result views">
-            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true">Plan View</button>
-            <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false">Merged Table</button>
+          <button id="reportProblemButton" class="secondary-button compact-button" type="button" data-i18n="diagnostics.report">Report a problem</button>
+          <button id="resetLayoutButton" class="secondary-button compact-button" type="button" data-i18n="results.resetLayout">Reset Layout</button>
+          <div class="tabs" role="tablist" aria-label="Result views" data-i18n-aria-label="results.views">
+            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true" data-i18n="results.planView">Plan View</button>
+            <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false" data-i18n="results.tableView">Merged Table</button>
           </div>
         </div>
       </div>
 
-      <div id="statusMessage" class="status-message">Select one or more items and enter the required production rate per minute.</div>
+      <div id="statusMessage" class="status-message" data-i18n="results.initial">Select one or more items and enter the required production rate per minute.</div>
       <div id="treeView" class="view-panel"></div>
       <div id="tableView" class="view-panel hidden"></div>
     </section>
   </main>
 
   <dialog id="diagnosticsDialog" class="diagnostics-dialog" aria-labelledby="diagnosticsTitle">
-    <h2 id="diagnosticsTitle">Report a problem</h2>
+    <h2 id="diagnosticsTitle" data-i18n="diagnostics.report">Report a problem</h2>
     <p id="diagnosticsNotice" role="status"></p>
-    <label for="diagnosticsOutput">Technical details and plan inputs</label>
+    <label for="diagnosticsOutput" data-i18n="diagnostics.details">Technical details and plan inputs</label>
     <textarea id="diagnosticsOutput" readonly rows="12" spellcheck="false"></textarea>
     <div class="panel-actions">
-      <button id="copyDiagnosticsButton" class="secondary-button" type="button">Copy report</button>
-      <button id="downloadDiagnosticsButton" class="secondary-button" type="button">Download report</button>
-      <a href="https://github.com/PyotrIlyichTchaikovsky/SatisfactoryCalculator/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer">Open GitHub issue</a>
-      <form method="dialog"><button class="secondary-button">Close</button></form>
+      <button id="copyDiagnosticsButton" class="secondary-button" type="button" data-i18n="diagnostics.copy">Copy report</button>
+      <button id="downloadDiagnosticsButton" class="secondary-button" type="button" data-i18n="diagnostics.download">Download report</button>
+      <a href="https://github.com/PyotrIlyichTchaikovsky/SatisfactoryCalculator/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer" data-i18n="diagnostics.github">Open GitHub issue</a>
+      <form method="dialog"><button class="secondary-button" data-i18n="diagnostics.close">Close</button></form>
     </div>
   </dialog>
 
   <template id="targetRowTemplate">
     <div class="target-row">
       <div class="field item-field">
-        <label>Item</label>
+        <label data-i18n="targets.item">Item</label>
         <div class="item-input-box">
           <span class="target-item-icon empty" aria-hidden="true"></span>
-          <input class="item-input" type="text" placeholder="Choose an item" readonly aria-haspopup="dialog" aria-label="Choose target item">
+          <input class="item-input" type="text" placeholder="Choose an item" readonly aria-haspopup="dialog" aria-label="Choose target item" data-i18n-placeholder="targets.chooseItem" data-i18n-aria-label="targets.chooseItem">
         </div>
       </div>
       <div class="field amount-field">
-        <label>Rate per Minute</label>
+        <label data-i18n="targets.rate">Rate per Minute</label>
         <div class="amount-box">
           <input class="amount-input" type="number" min="0" step="1" value="1" placeholder="60">
           <span class="unit-label">/ min</span>
         </div>
       </div>
-      <button class="remove-button" type="button" title="Remove item" aria-label="Remove item">&times;</button>
+      <button class="remove-button" type="button" title="Remove item" aria-label="Remove item" data-i18n-title="targets.remove" data-i18n-aria-label="targets.remove">&times;</button>
     </div>
   </template>
 </body>

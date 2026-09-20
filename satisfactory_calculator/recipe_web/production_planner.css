@@ -48,6 +48,23 @@ select {
   background: var(--surface);
 }
 
+.language-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 11rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.language-field select {
+  min-height: 2.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 0.7rem;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: 24px;

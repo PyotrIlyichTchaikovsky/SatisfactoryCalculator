@@ -587,14 +587,16 @@ def static_file_path(path: str) -> Path | None:
         "/production_planner.css",
         "/production_planner.js",
         "/planner_config.js",
+        "/planner_i18n.js",
         "/planner_diagnostics.js",
+        "/material_picker.js",
         "/robots.txt",
         "/sitemap.xml",
         "/ads.txt",
     }
     if path in allowed_root_files:
         return (STATIC_DIR / path.lstrip("/")).resolve()
-    if path.startswith("/data/icons/") and ".." not in path:
+    if (path.startswith("/data/icons/") or path.startswith("/i18n/")) and ".." not in path:
         candidate = (STATIC_DIR / path.lstrip("/")).resolve()
         try:
             candidate.relative_to(STATIC_DIR)
@@ -611,6 +613,8 @@ def cache_control_for_static(file_path: Path) -> str:
         return "public, max-age=604800"
     if "/data/icons/" in file_path.as_posix():
         return "public, max-age=2592000"
+    if "/i18n/" in file_path.as_posix():
+        return "public, max-age=3600"
     return "public, max-age=3600"
 
 

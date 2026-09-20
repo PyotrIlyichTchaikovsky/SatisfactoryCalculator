@@ -2,6 +2,8 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
+import json
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import build_frontend
@@ -22,6 +24,27 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
     def test_material_picker_asset_precedes_planner(self):
         html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
         self.assertLess(html.index('src="material_picker.js'), html.index('src="production_planner.js'))
+
+    def test_localization_loads_before_planner(self):
+        html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
+        self.assertLess(html.index('src="planner_i18n.js'), html.index('src="production_planner.js'))
+
+    def test_all_supported_locales_build_with_content_hashed_assets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assets = build_frontend.write_localization_assets(Path(temp_dir))
+            self.assertEqual(len(assets), 13)
+            self.assertTrue(all(set(value) == {"ui", "game"} for value in assets.values()))
+            self.assertTrue(all("i18n/" in value["game"] for value in assets.values()))
+
+    def test_game_localization_manifest_has_full_recipe_and_device_coverage(self):
+        manifest = json.loads((build_frontend.SOURCE_DIR / "i18n" / "game-data-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["gameBuildId"], "24656030")
+        self.assertFalse(manifest["calculationDataChanged"])
+        for locale in manifest["locales"]:
+            coverage = manifest["coverage"][locale]
+            self.assertEqual(coverage["items"], coverage["itemsExpected"])
+            self.assertEqual(coverage["recipes"], coverage["recipesExpected"])
+            self.assertEqual(coverage["devices"], coverage["devicesExpected"])
 
 
 class ReleaseFrontendTests(unittest.TestCase):

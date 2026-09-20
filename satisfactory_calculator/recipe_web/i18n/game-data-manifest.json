@@ -1,0 +1,198 @@
+{
+  "schema": 1,
+  "game": "Satisfactory",
+  "steamAppId": "526870",
+  "gameBuildId": "24656030",
+  "sourceDocsDate": "2026-08-15",
+  "verifiedOn": "2026-09-20",
+  "calculationDataChanged": false,
+  "calculationDataNote": "Compared with the installed game data; no item, recipe, device, or plan result changed.",
+  "locales": [
+    "en-US",
+    "fr-FR",
+    "it-IT",
+    "de-DE",
+    "es-ES",
+    "ja-JP",
+    "ko-KR",
+    "pl-PL",
+    "pt-BR",
+    "ru-RU",
+    "zh-CN",
+    "zh-TW",
+    "uk-UA"
+  ],
+  "sources": {
+    "en-US": {
+      "file": "en-US.json",
+      "sha256": "a81d250e96aa13db3c0bf8c332c199ad930b2f15323e2c1a069afa4c07f971bb",
+      "lastModified": 1786783451825307800
+    },
+    "fr-FR": {
+      "file": "fr.json",
+      "sha256": "307a40568e9633527a0cdc5349472e8c0f6e0d2a4ca3b5ae9e22fe804af7cf46",
+      "lastModified": 1786783451827899600
+    },
+    "it-IT": {
+      "file": "it.json",
+      "sha256": "684a2e1627c35d9af7f519ce4a0dd21ff9ecc587e13af54644691f3a513263c4",
+      "lastModified": 1786783451829119500
+    },
+    "de-DE": {
+      "file": "de.json",
+      "sha256": "ab4ce547f12822ed971b1bf8be386207841d92b38510b0c781677d7502eb48d9",
+      "lastModified": 1786783451824097500
+    },
+    "es-ES": {
+      "file": "es-ES.json",
+      "sha256": "c575d9fa0e8a8495f6c6513960a37c1ceeffc1b4f414c588571a5f52b6fe69b9",
+      "lastModified": 1786783451826782100
+    },
+    "ja-JP": {
+      "file": "ja.json",
+      "sha256": "845c8dc4f6290fc73181d5622c9ee1719be8d5b2f61af53c7a3ea9c8f7df6b48",
+      "lastModified": 1786783451830531000
+    },
+    "ko-KR": {
+      "file": "ko.json",
+      "sha256": "c139b9d69a14bf186206344567995cbf31fd5499491ef21ec9acc4ad91f240bf",
+      "lastModified": 1786783451830531000
+    },
+    "pl-PL": {
+      "file": "pl.json",
+      "sha256": "71df17b0add72cbd1f405ff9ddbca6a2a42c9f210770a4d933f42b347bede89f",
+      "lastModified": 1786783451833026400
+    },
+    "pt-BR": {
+      "file": "pt-BR.json",
+      "sha256": "39ecafbabad633655745e09eb836d172f0e75bf3de613887e0d6f590e37c3b95",
+      "lastModified": 1786783451833026400
+    },
+    "ru-RU": {
+      "file": "ru.json",
+      "sha256": "451933842bcf91745d95bd514a4c6fdcab5f8f892c90df72e76a39dad40b2f09",
+      "lastModified": 1786783451834169100
+    },
+    "zh-CN": {
+      "file": "zh-Hans.json",
+      "sha256": "d7e65b0a6dba3dc6e9b6d280c2faef86e363fbbb1876bc27d31a4bf5fcd3832f",
+      "lastModified": 1786783451834169100
+    },
+    "zh-TW": {
+      "file": "zh-Hant.json",
+      "sha256": "b456fc7ad55b9a4ad7b4413cd8160238a0ba4e002df9123b7aed10dabec149c4",
+      "lastModified": 1786783451834169100
+    },
+    "uk-UA": {
+      "file": "uk.json",
+      "sha256": "59b3cd884c3c9531912680c0c2f99f0c3d00bd2917f7caefb13682c96d6ed2d9",
+      "lastModified": 1786783451834169100
+    }
+  },
+  "coverage": {
+    "en-US": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "fr-FR": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "it-IT": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "de-DE": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "es-ES": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "ja-JP": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "ko-KR": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "pl-PL": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "pt-BR": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "ru-RU": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "zh-CN": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "zh-TW": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    },
+    "uk-UA": {
+      "items": 191,
+      "itemsExpected": 191,
+      "recipes": 309,
+      "recipesExpected": 309,
+      "devices": 16,
+      "devicesExpected": 16
+    }
+  }
+}

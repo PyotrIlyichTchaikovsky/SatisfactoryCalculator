@@ -27,6 +27,8 @@
   const DIRECT_RAW_RECIPE_ID = "__raw__";
   const TARGET_HISTORY_LIMIT = 10;
   const recipeModeInputs = [];
+  const i18n = window.PlannerI18n;
+  const t = (key, parameters) => i18n?.t(key, parameters) || key;
 
   let items = [];
   let plannerReady = false;
@@ -90,7 +92,12 @@
     preferredPlanByTargetKey.clear();
     activePreferredPlan = [];
   }
-  loadInitialData();
+  initializeLocalizedPlanner();
+
+  async function initializeLocalizedPlanner() {
+    await i18n?.ready;
+    loadInitialData();
+  }
 
   async function loadInitialData() {
     const supportingData = Promise.all([
@@ -103,12 +110,14 @@
       items = Array.isArray(itemPayload.items) ? itemPayload.items : [];
       itemsByClass.clear();
       items.forEach((item) => itemsByClass.set(item.className, item));
+      savedTargetPlans = normalizeTargetPlanList(savedState.savedTargetPlans);
+      targetHistory = normalizeTargetPlanList(savedState.targetHistory).slice(0, TARGET_HISTORY_LIMIT);
       if (!restoreTargetRows(savedState.targets)) {
         addTargetRow(null, "", { focus: false, save: false });
       }
       renderTargetPlanSelectors();
-      dataSummary.textContent = `${formatInteger(items.length)} items ready · Loading recipe catalog...`;
-      setStatus("Items are ready. You can select targets while the recipe catalog finishes loading.", false);
+      dataSummary.textContent = t("status.itemsLoading", { count: formatInteger(items.length) });
+      setStatus(t("status.itemsReady"), false);
 
       const [summary, recipePayload] = await supportingData;
       initializeRecipeSelection(recipePayload);
@@ -118,21 +127,21 @@
       activatePlanCacheForCurrentTargets();
       window.PlannerDiagnostics.setDataSummary(summary);
       dataSummary.textContent = summaryText(summary);
-      setStatus("Loaded Excel recipe data from server. Select items and enter rates per minute.", false);
+      setStatus(t("status.loaded"), false);
     } catch (error) {
       window.PlannerDiagnostics.reportError(error, "load-data");
       if (!targetRows.querySelector(".target-row")) {
         addTargetRow(null, "", { focus: false, save: false });
       }
       renderTargetPlanSelectors();
-      dataSummary.textContent = "Unable to connect to the production planner service";
+      dataSummary.textContent = t("status.connectionFailed");
       setStatus(`Unable to load data: ${error.message} Please retry or use Report a problem.`, true);
     }
   }
 
   async function calculate(options = {}) {
     if (!plannerReady) {
-      setStatus("The recipe catalog is still loading. Please wait a moment before calculating.", false);
+      setStatus(t("status.loadingRecipes"), false);
       return;
     }
     clearRecipeCardChecks();
@@ -145,7 +154,7 @@
     savePlannerState();
 
     let calculationResult = null;
-    setStatus("Requesting calculation from the server...", false);
+    setStatus(t("status.calculating"), false);
     try {
       const result = await fetchJson("/api/plan", {
         method: "POST",
@@ -178,18 +187,18 @@
         (total, row) => total + Number(row.rate || 0),
         0,
       );
-      setStatus(
-        `Optimized ${formatInteger(targetCount)} target(s), using ${formatInteger(recipeRunCount)} recipe(s), selected ${formatInteger(selectedRecipeIds.size)} recipe(s), external input ${formatNumber(externalInputRate)} /min, merged into ${formatInteger(totalRows)} material row(s).`,
-        false,
-      );
+      setStatus(t("status.optimized", {
+        targets: formatInteger(targetCount), recipes: formatInteger(recipeRunCount),
+        selected: formatInteger(selectedRecipeIds.size), external: formatNumber(externalInputRate), rows: formatInteger(totalRows),
+      }), false);
     } catch (error) {
       const issue = window.PlannerDiagnostics.reportError(error, "calculate-or-render", true, calculationResult);
       lastServerResult = null;
       lastServerTargets = [];
       lastServerPlanSignature = "";
       setStatus(`Calculation failed: ${error.message} Problem ID: ${issue.id}. Use Report a problem to share details.`, true);
-      treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
-      tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
+      treeView.replaceChildren(makeEmptyMessage(t("results.noPlan")));
+      tableView.replaceChildren(makeEmptyMessage(t("results.noTable")));
     }
   }
 
@@ -201,8 +210,8 @@
 
     if (!requiredRecipeIds.length) {
       setStatus(`Calculation failed: ${result.failure || "current recipe selection cannot satisfy the target."}`, true);
-      treeView.replaceChildren(makeEmptyMessage("No production plan can be displayed for the current conditions."));
-      tableView.replaceChildren(makeEmptyMessage("No merged table can be displayed for the current conditions."));
+      treeView.replaceChildren(makeEmptyMessage(t("results.noPlan")));
+      tableView.replaceChildren(makeEmptyMessage(t("results.noTable")));
       return;
     }
 
@@ -260,7 +269,8 @@
   }
 
   async function fetchJson(url, options = {}) {
-    return window.PlannerDiagnostics.fetchJson(url, options);
+    const payload = await window.PlannerDiagnostics.fetchJson(url, options);
+    return i18n?.localizePayload(payload) || payload;
   }
 
   function renderPlannerResult(result, options = {}) {
@@ -352,7 +362,7 @@
       .map((target) => {
         const itemClass = String(target?.itemClass || target?.item?.className || "").trim();
         const item = itemClass ? itemsByClass.get(itemClass) : null;
-        const itemName = String(target?.itemName || target?.item?.name || item?.name || itemClass).trim();
+        const itemName = String(item?.name || target?.item?.name || target?.itemName || itemClass).trim();
         const rate = Number(target?.rate);
         if (!itemClass || !itemName || !Number.isFinite(rate) || rate <= 0) {
           return null;
@@ -422,12 +432,12 @@
     addTargetPlanToList(savedTargetPlans, snapshots);
     savePlannerState();
     renderTargetPlanSelectors();
-    setStatus(`Saved target plan: ${targetPlanLabel(snapshots)}.`, false);
+    setStatus(t("status.saved", { plan: targetPlanLabel(snapshots) }), false);
   }
 
   function renderTargetPlanSelectors() {
-    renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, "No saved plans", "Select a saved plan");
-    renderTargetPlanPicker(historyPlanSelect, targetHistory, "No recent history", "Select a recent plan");
+    renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, t("targets.noSaved"), t("targets.selectSaved"));
+    renderTargetPlanPicker(historyPlanSelect, targetHistory, t("targets.noHistory"), t("targets.selectHistory"));
     if (planLibrary instanceof HTMLElement) {
       planLibrary.hidden = !savedTargetPlans.length && !targetHistory.length;
     }
@@ -594,8 +604,8 @@
     }
     const total = Array.isArray(recipeCatalog.selectableRecipeIds) ? recipeCatalog.selectableRecipeIds.length : 0;
     recipeFilterButton.textContent = total
-      ? `Recipe Filter ${formatInteger(selectedRecipeIds.size)}/${formatInteger(total)}`
-      : "Recipe Filter";
+      ? `${t("recipes.filter")} ${formatInteger(selectedRecipeIds.size)}/${formatInteger(total)}`
+      : t("recipes.filter");
   }
 
   function defaultRecipeIdSet() {
@@ -843,6 +853,7 @@
 
   function addTargetRow(initialItem = null, initialRate = "1", options = {}) {
     const fragment = targetTemplate.content.cloneNode(true);
+    i18n?.applyDocument(fragment);
     const row = fragment.querySelector(".target-row");
     const itemInput = row.querySelector(".item-input");
     const itemInputBox = row.querySelector(".item-input-box");
@@ -857,8 +868,8 @@
     const openTargetMaterialPicker = async () => {
       const selection = await window.MaterialPicker.open({
         items,
-        title: "Choose Target Material",
-        description: "Choose the material your factory should produce.",
+        title: t("targets.chooseTarget"),
+        description: t("targets.chooseTargetHelp"),
         initialId: row.dataset.itemClass || "",
         preferredCategory: "NormalMaterial",
       });
@@ -943,7 +954,7 @@
 
       const item = selectedRowItem(row);
       if (!item) {
-        setStatus(`Unable to match item: ${rawName || "empty input"}`, true);
+        setStatus(t("status.unmatched", { name: rawName || "empty input" }), true);
         row.querySelector(".item-input-box")?.classList.add("invalid");
         itemInput.focus();
         return [];
@@ -951,7 +962,7 @@
 
       const rate = Number(rawAmount);
       if (!Number.isFinite(rate) || rate <= 0) {
-        setStatus(`Enter a positive per-minute production rate for ${item.name}.`, true);
+        setStatus(t("status.invalidRate", { name: item.name }), true);
         amountInput.focus();
         return [];
       }
@@ -960,7 +971,7 @@
     }
 
     if (!targets.length) {
-      setStatus("Add at least one target item and enter a per-minute rate.", true);
+      setStatus(t("status.addTarget"), true);
     }
     return targets;
   }
@@ -999,7 +1010,7 @@
     storeCurrentPreferredPlan();
     lastServerPlanSignature = planSignature();
     if (options.updateStatus) {
-      setStatus(`Scaled the current result by ${formatNumber(scaleFactor)}x without requesting the server again.`, false);
+      setStatus(t("status.scaled", { factor: formatNumber(scaleFactor) }), false);
     }
     return true;
   }
@@ -1160,7 +1171,7 @@
   function renderGraphView(result, options = {}) {
     const graph = buildFlowGraph(result);
     if (!graph.nodes.length) {
-      treeView.replaceChildren(makeEmptyMessage("No production target has been calculated yet."));
+      treeView.replaceChildren(makeEmptyMessage(t("results.noTarget")));
       return;
     }
 
@@ -1368,7 +1379,8 @@
   }
 
   function materialCategoryText(item, fallback = "") {
-    return String(item?.materialCategory || fallback || "").trim();
+    const category = String(item?.materialCategory || "").trim();
+    return category ? t(`category.${category}`) : String(fallback || "").trim();
   }
 
   function materialIconPath(item) {
@@ -2511,7 +2523,7 @@
     titleWrap.className = "recipe-filter-title";
     const title = document.createElement("h3");
     title.id = titleId;
-    title.textContent = hasRecipeIdFilter ? "Required Recipes" : "Recipe Filter";
+    title.textContent = hasRecipeIdFilter ? t("recipes.required") : t("recipes.filter");
     titleWrap.appendChild(title);
     if (noticeText) {
       const notice = document.createElement("div");
@@ -2525,7 +2537,7 @@
     const closeButton = document.createElement("button");
     closeButton.type = "button";
     closeButton.className = "secondary-button";
-    closeButton.textContent = "Close";
+    closeButton.textContent = t("recipes.close");
     closeButton.addEventListener("click", closeRecipeFilterDialog);
     header.append(titleWrap, closeButton);
 
@@ -2534,21 +2546,21 @@
     const search = document.createElement("input");
     search.className = "recipe-filter-search";
     search.type = "search";
-    search.placeholder = hasRecipeIdFilter ? "Search required recipes" : "Search materials or recipes";
+    search.placeholder = hasRecipeIdFilter ? t("recipes.searchRequired") : t("recipes.search");
     const materialButton = document.createElement("button");
     materialButton.type = "button";
     materialButton.className = "secondary-button recipe-material-picker-button";
-    materialButton.textContent = "Choose Material";
+    materialButton.textContent = t("recipes.chooseMaterial");
     const clearMaterialButton = document.createElement("button");
     clearMaterialButton.type = "button";
     clearMaterialButton.className = "secondary-button";
-    clearMaterialButton.textContent = "Clear Material";
+    clearMaterialButton.textContent = t("recipes.clearMaterial");
     clearMaterialButton.hidden = true;
     const defaultButton = document.createElement("button");
     defaultButton.type = "button";
     defaultButton.className = "secondary-button";
     defaultButton.dataset.recipeFilterAction = "clear-alternates";
-    defaultButton.textContent = "Reset All";
+    defaultButton.textContent = t("recipes.resetAll");
     tools.append(search, materialButton, clearMaterialButton, defaultButton);
 
     const list = document.createElement("div");
@@ -2558,11 +2570,11 @@
     footer.className = "recipe-filter-footer";
     const hint = document.createElement("div");
     hint.className = "recipe-filter-summary";
-    hint.textContent = "The same recipe can appear under multiple materials; checking it in any row updates every copy.";
+    hint.textContent = t("recipes.hint");
     const doneButton = document.createElement("button");
     doneButton.type = "button";
     doneButton.className = "primary-button";
-    doneButton.textContent = "Done";
+    doneButton.textContent = t("recipes.done");
     doneButton.addEventListener("click", closeRecipeFilterDialog);
     footer.append(hint, doneButton);
 
@@ -2581,8 +2593,8 @@
       const selection = await window.MaterialPicker.open({
         items,
         filter: (item) => recipeMaterialIds.has(item.className),
-        title: "Choose Material for Recipe Search",
-        description: "Select a material to show its available recipes.",
+        title: t("recipes.chooseSearchMaterial"),
+        description: t("recipes.chooseSearchHelp"),
         initialId: activeMaterialClass,
       });
       if (!selection) return;
@@ -2640,7 +2652,7 @@
 
     function refreshMaterialFilterControls() {
       const selectedItem = itemsByClass.get(activeMaterialClass);
-      materialButton.textContent = selectedItem ? `Material: ${selectedItem.name}` : "Choose Material";
+      materialButton.textContent = selectedItem ? t("recipes.material", { name: selectedItem.name }) : t("recipes.chooseMaterial");
       materialButton.classList.toggle("active", Boolean(selectedItem));
       clearMaterialButton.hidden = !selectedItem;
     }
@@ -2909,7 +2921,7 @@
     }
 
     if (!visibleMaterialCount) {
-      list.replaceChildren(makeEmptyMessage("No matching recipes."));
+      list.replaceChildren(makeEmptyMessage(t("recipes.none")));
     }
     if (summary) {
       const materialFilterItem = itemsByClass.get(materialClassFilter);
@@ -2938,7 +2950,7 @@
     checkbox.type = "checkbox";
     checkbox.className = "recipe-filter-checkbox direct-raw-checkbox";
     checkbox.checked = !disabledRawMaterialClasses.has(itemClass);
-    checkbox.setAttribute("aria-label", `Use ${group.item?.name || itemClass} directly as a raw material`);
+    checkbox.setAttribute("aria-label", t("recipes.directRaw", { name: group.item?.name || itemClass }));
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
         disabledRawMaterialClasses.delete(itemClass);
@@ -2956,8 +2968,8 @@
     name.className = "recipe-row-name";
     const recipeTag = document.createElement("span");
     recipeTag.className = "recipe-row-tag";
-    recipeTag.textContent = "[Base Recipe]";
-    name.append(recipeTag, document.createTextNode(`Use ${group.item?.name || itemClass} Directly`));
+    recipeTag.textContent = t("recipes.baseTag");
+    name.append(recipeTag, document.createTextNode(t("recipes.directRawName", { name: group.item?.name || itemClass })));
     const meta = document.createElement("div");
     meta.className = "recipe-row-meta";
     meta.textContent = "primary · base · raw source";
@@ -3001,7 +3013,7 @@
     name.className = "recipe-row-name";
     const recipeTag = document.createElement("span");
     recipeTag.className = "recipe-row-tag";
-    recipeTag.textContent = isDefaultRecipe ? "[Base Recipe]" : "[Recipe]";
+    recipeTag.textContent = isDefaultRecipe ? t("recipes.baseTag") : t("recipes.recipeTag");
     name.append(recipeTag, document.createTextNode(recipe.name || recipe.id));
     const meta = document.createElement("div");
     meta.className = "recipe-row-meta";
@@ -3422,10 +3434,10 @@
   }
 
   function graphNodeKindText(node) {
-    if (node.type === "raw") return materialCategoryText(node.item, "Raw material");
-    if (node.type === "target") return "Output";
-    if (node.type === "surplus") return "Surplus";
-    return "Recipe";
+    if (node.type === "raw") return materialCategoryText(node.item, t("category.RawMaterial"));
+    if (node.type === "target") return t("kind.output");
+    if (node.type === "surplus") return t("kind.surplus");
+    return t("kind.recipe");
   }
 
   function graphNodeSortKey(node, balanceByClass) {
@@ -3517,7 +3529,7 @@
 
   function renderMergedTable(totals) {
     if (!totals.length) {
-      tableView.replaceChildren(makeEmptyMessage("The selected targets have no downstream material requirements."));
+      tableView.replaceChildren(makeEmptyMessage(t("results.noDownstream")));
       return;
     }
 
@@ -3528,7 +3540,7 @@
     table.className = "merged-table";
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    ["Item", "Required / min", "Unit", "Type", "Recipes Used"].forEach((label) => {
+    ["table.item", "table.required", "table.unit", "table.type", "table.recipes"].map(t).forEach((label) => {
       const th = document.createElement("th");
       th.textContent = label;
       headRow.appendChild(th);
@@ -3541,7 +3553,7 @@
       appendCell(tr, row.item.name);
       appendCell(tr, formatNumber(row.rate), "number-cell");
       appendCell(tr, row.item.unit);
-      appendCell(tr, row.raw ? materialCategoryText(row.item, "Raw material") : "Intermediate material");
+      appendCell(tr, row.raw ? materialCategoryText(row.item, t("category.RawMaterial")) : t("kind.intermediate"));
       appendRecipeUsageCell(tr, row);
       tbody.appendChild(tr);
     });
@@ -3558,7 +3570,7 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = "table-switch-recipe-button";
-      button.textContent = "Recipes";
+      button.textContent = t("results.recipes");
       button.setAttribute("aria-label", `Show recipes for ${switchRecipe.primaryOutput?.name || row.item?.name || ""}`);
       button.addEventListener("click", () => openRecipeFilterDialog({
         materialClass: switchRecipe.primaryOutput?.className || row.item?.className || "",
@@ -3576,10 +3588,10 @@
   }
 
   function summaryText(summary) {
-    return [
-      `${formatInteger(summary.recipeCount)} recipes`,
-      `${formatInteger(summary.itemCount)} items`,
-    ].join(" · ");
+    return t("summary.loaded", {
+      recipes: formatInteger(summary.recipeCount), items: formatInteger(summary.itemCount),
+      raw: formatInteger(summary.rawMaterialCount),
+    });
   }
 
   function appendCell(row, text, className = "") {
@@ -3619,11 +3631,7 @@
   }
 
   function normalize(value) {
-    return String(value || "")
-      .normalize("NFKD")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim();
+    return i18n?.normalizeSearch(value) || String(value || "").normalize("NFKD").toLowerCase().trim();
   }
 
   function compact(value) {
@@ -3635,10 +3643,7 @@
     if (!Number.isFinite(number)) {
       return "";
     }
-    if (Math.abs(number - Math.round(number)) < 1e-9) {
-      return String(Math.round(number));
-    }
-    return number.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    return i18n?.formatNumber(number) || String(number);
   }
 
   function formatMultiplier(value) {
@@ -3683,7 +3688,7 @@
   }
 
   function formatInteger(value) {
-    return Number(value || 0).toLocaleString("en-US");
+    return i18n?.formatInteger(value || 0) || Number(value || 0).toLocaleString();
   }
 
   function roundGraphCoordinate(value) {

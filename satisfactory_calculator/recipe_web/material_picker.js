@@ -3,11 +3,11 @@
 
   const CATEGORY_ORDER = ["TierMaterial", "NormalMaterial", "RawMaterial", "PickupMaterial", "Power"];
   const CATEGORY_LABELS = {
-    TierMaterial: "Tier Target Materials",
-    NormalMaterial: "Manufactured Items",
-    RawMaterial: "Raw Resources",
-    PickupMaterial: "Collectibles",
-    Power: "Power",
+    TierMaterial: "picker.tierMaterials",
+    NormalMaterial: "picker.manufactured",
+    RawMaterial: "picker.raw",
+    PickupMaterial: "picker.collectibles",
+    Power: "picker.power",
   };
   const RECENT_STORAGE_KEY = "satisfactoryMaterialPicker.recent.v1";
   const RECENT_LIMIT = 12;
@@ -53,7 +53,7 @@
     const filter = typeof options.filter === "function" ? options.filter : () => true;
     const items = sourceItems
       .filter((item) => item?.className && filter(item))
-      .sort((left, right) => String(left.name || left.className).localeCompare(String(right.name || right.className)));
+      .sort((left, right) => i18n().compare(left.name || left.className, right.name || right.className));
     const previousFocus = document.activeElement;
 
     return new Promise((resolve) => {
@@ -73,14 +73,14 @@
       const heading = document.createElement("div");
       const title = document.createElement("h3");
       title.id = titleId;
-      title.textContent = options.title || "Choose Material";
+      title.textContent = options.title || t("picker.title");
       const description = document.createElement("p");
-      description.textContent = options.description || "Choose a category, then select a material.";
+      description.textContent = options.description || t("picker.help");
       heading.append(title, description);
       const closeButton = document.createElement("button");
       closeButton.type = "button";
       closeButton.className = "material-picker-close";
-      closeButton.setAttribute("aria-label", "Close material picker");
+      closeButton.setAttribute("aria-label", t("picker.close"));
       closeButton.textContent = "×";
       header.append(heading, closeButton);
 
@@ -89,8 +89,8 @@
       const search = document.createElement("input");
       search.type = "search";
       search.className = "material-picker-search";
-      search.placeholder = "Search by material name";
-      search.setAttribute("aria-label", "Search materials");
+      search.placeholder = t("picker.search");
+      search.setAttribute("aria-label", t("picker.searchAria"));
       const count = document.createElement("span");
       count.className = "material-picker-count";
       searchWrap.append(search, count);
@@ -99,11 +99,11 @@
       body.className = "material-picker-body";
       const categories = document.createElement("nav");
       categories.className = "material-picker-categories";
-      categories.setAttribute("aria-label", "Material categories");
+      categories.setAttribute("aria-label", t("picker.categories"));
       const grid = document.createElement("div");
       grid.className = "material-picker-grid";
       grid.setAttribute("role", "listbox");
-      grid.setAttribute("aria-label", "Materials");
+      grid.setAttribute("aria-label", t("picker.materials"));
       body.append(categories, grid);
 
       dialog.append(header, searchWrap, body);
@@ -139,9 +139,9 @@
       const renderCategories = () => {
         categories.replaceChildren();
         const definitions = [
-          { id: "recent", label: "Recently Selected" },
-          { id: "all", label: "All Materials" },
-          ...availableCategories.map((id) => ({ id, label: CATEGORY_LABELS[id] || id })),
+          { id: "recent", label: t("picker.recent") },
+          { id: "all", label: t("picker.all") },
+          ...availableCategories.map((id) => ({ id, label: CATEGORY_LABELS[id] ? t(CATEGORY_LABELS[id]) : id })),
         ];
         definitions.forEach(({ id, label }) => {
           const button = document.createElement("button");
@@ -173,14 +173,14 @@
             const tierDifference = ITEM_TIERS[left.className] - ITEM_TIERS[right.className];
             if (tierDifference) return tierDifference;
           }
-          return String(left.name || left.className).localeCompare(String(right.name || right.className));
+          return i18n().compare(left.name || left.className, right.name || right.className);
         });
         grid.replaceChildren();
-        count.textContent = `${visible.length} material${visible.length === 1 ? "" : "s"}`;
+        count.textContent = t("picker.count", { count: visible.length });
         if (!visible.length) {
           const empty = document.createElement("p");
           empty.className = "material-picker-empty";
-          empty.textContent = "No materials match this search.";
+          empty.textContent = t("picker.empty");
           grid.appendChild(empty);
           return;
         }
@@ -190,7 +190,7 @@
           card.className = "material-picker-card";
           card.dataset.itemId = item.className;
           card.setAttribute("role", "option");
-          card.setAttribute("aria-label", `Select ${item.name || item.className}`);
+          card.setAttribute("aria-label", t("picker.select", { name: item.name || item.className }));
           card.setAttribute("aria-selected", String(item.className === options.initialId));
           const icon = document.createElement("img");
           icon.className = "material-picker-card-icon";
@@ -204,7 +204,7 @@
           if (activeCategory === "TierMaterial") {
             const tier = document.createElement("span");
             tier.className = "material-picker-card-tier";
-            tier.textContent = `Tier ${ITEM_TIERS[item.className]}`;
+            tier.textContent = t("picker.tier", { tier: ITEM_TIERS[item.className] });
             card.appendChild(tier);
           }
           card.addEventListener("click", () => {
@@ -261,7 +261,19 @@
   }
 
   function normalize(value) {
-    return String(value || "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return i18n().normalizeSearch(value);
+  }
+
+  function i18n() {
+    return window.PlannerI18n || {
+      t: (key) => key,
+      compare: (left, right) => String(left).localeCompare(String(right)),
+      normalizeSearch: (value) => String(value || "").normalize("NFKD").toLowerCase(),
+    };
+  }
+
+  function t(key, parameters) {
+    return i18n().t(key, parameters);
   }
 
   function escapeHtml(value) {

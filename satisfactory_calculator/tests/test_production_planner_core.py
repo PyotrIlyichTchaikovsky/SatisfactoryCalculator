@@ -56,6 +56,15 @@ class ProductionPlannerCoreTests(unittest.TestCase):
         self.assertIn("__raw__", option_ids)
         self.assertIn("Recipe_Coal_Iron_C", option_ids)
 
+    def test_plan_rows_include_stable_recipe_ids_for_localization(self) -> None:
+        result = self.planner.plan([{"itemClass": "Desc_IronPlate_C", "rate": 60}])
+        iron_plate = next(row for row in result["totals"] if row["item"]["className"] == "Desc_IronPlate_C")
+        balance = next(row for row in result["materialBalances"] if row["item"]["className"] == "Desc_IronPlate_C")
+
+        self.assertIn("Recipe_IronPlate_C", iron_plate["recipeIds"])
+        self.assertIn("Recipe_IronPlate_C", balance["producerRecipeIds"])
+        self.assertTrue(all("titleKey" in layer for layer in result["layers"]))
+
     def test_preferred_plan_can_switch_raw_material_to_recipe(self) -> None:
         result = self.planner.plan(
             [{"itemClass": "Desc_Coal_C", "rate": 60}],

@@ -1355,6 +1355,8 @@ class ProductionPlanner:
                 "raw": self._is_terminal_raw(item),
                 "producers": set(),
                 "consumers": set(),
+                "producerRecipeIds": set(),
+                "consumerRecipeIds": set(),
             }
 
         for allocation in target_allocations:
@@ -1364,14 +1366,17 @@ class ProductionPlanner:
 
         for run in recipe_runs:
             recipe_name = run["recipe"]["name"]
+            recipe_id = run["recipe"]["id"]
             for output in run["outputs"]:
                 balance = balances[output["item"]["className"]]
                 balance["produced"] += float(output["rate"])
                 balance["producers"].add(recipe_name)
+                balance["producerRecipeIds"].add(recipe_id)
             for input_item in run["inputs"]:
                 balance = balances[input_item["item"]["className"]]
                 balance["consumed"] += float(input_item["rate"])
                 balance["consumers"].add(recipe_name)
+                balance["consumerRecipeIds"].add(recipe_id)
 
         result: list[dict[str, Any]] = []
         for balance in balances.values():
@@ -1407,6 +1412,8 @@ class ProductionPlanner:
                     "raw": balance["raw"],
                     "producers": sorted(balance["producers"]),
                     "consumers": sorted(balance["consumers"]),
+                    "producerRecipeIds": sorted(balance["producerRecipeIds"]),
+                    "consumerRecipeIds": sorted(balance["consumerRecipeIds"]),
                 }
             )
 
@@ -1438,6 +1445,8 @@ class ProductionPlanner:
             layers.append(
                 {
                     "title": "Target Outputs" if layer_index == 0 else f"Supply Layer {layer_index}",
+                    "titleKey": "targetOutputs" if layer_index == 0 else "supplyLayer",
+                    "layerIndex": layer_index,
                     "kind": "recipes",
                     "recipeRuns": selected,
                 }
@@ -1458,6 +1467,7 @@ class ProductionPlanner:
             layers.append(
                 {
                     "title": "Shared / Loop Supply",
+                    "titleKey": "sharedSupply",
                     "kind": "recipes",
                     "recipeRuns": shared_runs,
                 }
@@ -1467,6 +1477,7 @@ class ProductionPlanner:
             layers.append(
                 {
                     "title": "External Input",
+                    "titleKey": "externalInput",
                     "kind": "raw",
                     "rawItems": [
                         {
@@ -1495,6 +1506,7 @@ class ProductionPlanner:
                     "rate": _clean_number(demand_rate),
                     "raw": balance["raw"],
                     "recipes": balance["producers"],
+                    "recipeIds": balance["producerRecipeIds"],
                 }
             )
         rows.sort(key=lambda row: (row["raw"], row["item"]["name"].lower(), row["item"]["className"]))

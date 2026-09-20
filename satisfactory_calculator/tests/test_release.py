@@ -29,6 +29,7 @@ class ReleaseTransactionTests(unittest.TestCase):
         self.stage = dict(self.config.identity(),CLOUD_RUN_SERVICE="planner-stage",CLOUDFLARE_PAGES_PROJECT="planner-stage",PUBLIC_SITE_URL="https://stage.example",PLANNER_API_BASE_URL="https://stage-api.example")
         self.candidate = {"schema":1,"sha":"a"*40,"releaseId":"123-1","image":"asia-east1-docker.pkg.dev/project/images/planner@sha256:"+"b"*64,
                           "version":"v2026.09.14.42.1","applicationDigest":"c"*64,"dataVersion":"d"*16,
+                          "localizationVersion":"e"*16,
                           "stagingPassed":True,"stagingIdentity":self.stage}
         self.old = {"traffic":{"old-revision":100},"frontendDeployment":"old-pages","manifest":None}
         self.state = {"schema":1,"environment":"production","identity":self.config.identity(),"before":self.old,
@@ -63,6 +64,11 @@ class ReleaseTransactionTests(unittest.TestCase):
             with self.assertRaises(release.ReleaseError): release.prepare(self.config,cloud,self.candidate)
         cloud.snapshot.assert_not_called()
         cloud.stage_backend.assert_not_called()
+
+    def test_manifest_rejects_a_different_localization_bundle(self):
+        actual = dict(self.candidate, environment="production", localizationVersion="f"*16)
+        with self.assertRaisesRegex(release.ReleaseError, "localizationVersion mismatch"):
+            release.verify_manifest(actual, self.candidate, "production")
 
     def test_provider_drift_aborts_before_any_mutation(self):
         cloud=self.cloud(); cloud.snapshot.return_value=dict(self.old,frontendDeployment="outside-deploy")

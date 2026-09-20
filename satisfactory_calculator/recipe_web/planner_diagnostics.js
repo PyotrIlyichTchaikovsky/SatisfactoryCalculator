@@ -9,6 +9,7 @@
   const reported = new WeakMap();
   const responses = new WeakMap();
   const copy = (value) => JSON.parse(JSON.stringify(value));
+  const t = (key, parameters) => window.PlannerI18n?.t(key, parameters) || key;
   const issueId = () => window.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const context = () => {
     try { return copy(getContext()); } catch (_) { return { unavailable: true }; }
@@ -96,7 +97,7 @@
     const dialog = document.getElementById("diagnosticsDialog");
     const output = document.getElementById("diagnosticsOutput");
     output.value = JSON.stringify(buildReport(), null, 2);
-    document.getElementById("diagnosticsNotice").textContent = "Review this report before sharing it in a GitHub issue. It includes your current plan and recent calculation inputs. Nothing is sent by these buttons.";
+    document.getElementById("diagnosticsNotice").textContent = t("diagnostics.notice");
     dialog.showModal();
   }
 
@@ -134,10 +135,10 @@
     const notice = document.getElementById("diagnosticsNotice");
     try {
       await navigator.clipboard.writeText(output.value);
-      notice.textContent = "Report copied. Paste it into your issue with the steps you took and what you expected.";
+      notice.textContent = t("diagnostics.copied");
     } catch (_) {
       output.focus(); output.select();
-      notice.textContent = "Automatic copy is unavailable. Copy the selected text, or download the report.";
+      notice.textContent = t("diagnostics.copyFailed");
     }
   });
   document.getElementById("downloadDiagnosticsButton")?.addEventListener("click", () => {

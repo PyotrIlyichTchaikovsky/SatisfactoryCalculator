@@ -16,7 +16,8 @@ OUTPUT_DIR = ROOT_DIR / "dist" / "frontend"
 
 
 def application_digest() -> str:
-    files = [SOURCE_DIR / name for name in ("production_planner.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_diagnostics.js", "data/Data.xlsx")]
+    files = [SOURCE_DIR / name for name in ("production_planner.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx")]
+    files += sorted((SOURCE_DIR / "i18n").glob("*.json"))
     files += sorted((SOURCE_DIR / "data" / "icons").rglob("*.png"))
     digest = hashlib.sha256()
     for path in files:
@@ -31,6 +32,7 @@ def release_manifest(config: dict[str, object]) -> dict[str, object]:
             "version": config["releaseVersion"],
             "apiBaseUrl": config["apiBaseUrl"], "applicationDigest": application_digest(),
             "dataVersion": hashlib.sha256((SOURCE_DIR / "data" / "Data.xlsx").read_bytes()).hexdigest()[:16],
+            "localizationVersion": localization_digest(),
             "configDigest": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()}
 
 
@@ -43,6 +45,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config = frontend_config()
+    config["localizationAssets"] = write_localization_assets(output_dir)
     asset_names = write_hashed_assets(output_dir, config)
     copy_icon_assets(output_dir)
 
@@ -69,6 +72,7 @@ def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str
         "planner_diagnostics.js": (SOURCE_DIR / "planner_diagnostics.js").read_bytes(),
         "material_picker.js": (SOURCE_DIR / "material_picker.js").read_bytes(),
         "production_planner.js": (SOURCE_DIR / "production_planner.js").read_bytes(),
+        "planner_i18n.js": (SOURCE_DIR / "planner_i18n.js").read_bytes(),
         "planner_config.js": render_planner_config(config).encode("utf-8"),
     }
     asset_names = {}
@@ -78,6 +82,34 @@ def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str
         (output_dir / hashed_name).write_bytes(content)
         asset_names[source_name] = hashed_name
     return asset_names
+
+
+def write_localization_assets(output_dir: Path) -> dict[str, dict[str, str]]:
+    target_dir = output_dir / "i18n"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    result: dict[str, dict[str, str]] = {}
+    for source in sorted((SOURCE_DIR / "i18n").glob("*.json")):
+        match = re.fullmatch(r"(ui|game)\.([A-Za-z-]+)\.json", source.name)
+        if not match:
+            continue
+        kind, locale = match.groups()
+        content = source.read_bytes()
+        filename = f"{kind}.{locale}.{content_hash(content)}.json"
+        (target_dir / filename).write_bytes(content)
+        result.setdefault(locale, {})[kind] = f"i18n/{filename}"
+    expected = {"en-US", "fr-FR", "it-IT", "de-DE", "es-ES", "ja-JP", "ko-KR", "pl-PL", "pt-BR", "ru-RU", "zh-CN", "zh-TW", "uk-UA"}
+    incomplete = sorted(locale for locale in expected if set(result.get(locale, {})) != {"ui", "game"})
+    if incomplete:
+        raise SystemExit(f"Incomplete localization assets: {', '.join(incomplete)}")
+    return result
+
+
+def localization_digest() -> str:
+    digest = hashlib.sha256()
+    for path in sorted((SOURCE_DIR / "i18n").glob("*.json")):
+        digest.update(path.name.encode())
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()[:16]
 
 
 def copy_icon_assets(output_dir: Path) -> None:
@@ -128,7 +160,7 @@ def render_html(source_path: Path, config: dict[str, object], asset_names: dict[
     if config["releaseVersion"]:
         prefix = "Release test environment · Version" if config["sentryEnvironment"] == "staging" else "Version"
         version = escape_attr(str(config["releaseVersion"]))
-        html = html.replace('<p id="dataSummary">', f'<p id="releaseLabel">{prefix} {version}</p>\n      <p id="dataSummary">', 1)
+        html = html.replace('<p id="dataSummary"', f'<p id="releaseLabel">{prefix} {version}</p>\n      <p id="dataSummary"', 1)
     if config["sentryEnvironment"] == "staging":
         html = html.replace("</head>", '  <meta name="robots" content="noindex, nofollow">\n</head>', 1)
     if injections:
@@ -145,6 +177,7 @@ def render_planner_config(config: dict[str, object]) -> str:
         "sentryRelease": config["sentryRelease"],
         "adsenseClient": config["adsenseClient"],
         "adsenseEnabled": config["adsenseEnabled"],
+        "localizationAssets": config.get("localizationAssets", {}),
     }
     return "window.PLANNER_CONFIG = " + json.dumps(public_config, ensure_ascii=False, indent=2) + ";\n"
 
@@ -180,6 +213,9 @@ def render_headers(config: dict[str, object]) -> str:
             "",
             "/data/icons/*",
             "  Cache-Control: public, max-age=2592000",
+            "",
+            "/i18n/*",
+            "  Cache-Control: public, max-age=31536000, immutable",
             "",
         ]
     )
