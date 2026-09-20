@@ -107,5 +107,6 @@
   "table.required": "Required / min",
   "table.unit": "Unit",
   "table.type": "Type",
-  "table.recipes": "Recipes Used"
+  "table.recipes": "Recipes Used",
+  "privacy.link": "Privacy"
 }

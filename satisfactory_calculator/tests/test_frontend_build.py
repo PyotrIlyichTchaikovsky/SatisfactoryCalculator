@@ -29,6 +29,23 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
         html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
         self.assertLess(html.index('src="planner_i18n.js'), html.index('src="production_planner.js'))
 
+    def test_analytics_loads_before_interactive_components(self):
+        html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
+        self.assertLess(html.index('src="planner_analytics.js'), html.index('src="material_picker.js'))
+
+    def test_privacy_notice_describes_anonymous_analytics(self):
+        privacy = (build_frontend.SOURCE_DIR / "privacy.html").read_text(encoding="utf-8")
+        self.assertIn("每天更换", privacy)
+        self.assertIn("does not contain factory plan contents", privacy)
+        self.assertIn("?analytics_test=1", privacy)
+
+    def test_analytics_endpoint_is_public_config_and_allowed_by_csp(self):
+        with patch.dict(build_frontend.os.environ, {"PLANNER_ANALYTICS_ENDPOINT":"https://analytics.example/events"}, clear=True):
+            config = build_frontend.frontend_config()
+        self.assertEqual(config["analyticsEndpoint"], "https://analytics.example/events")
+        self.assertIn("https://analytics.example", build_frontend.content_security_policy(config))
+        self.assertIn('"analyticsEndpoint": "https://analytics.example/events"', build_frontend.render_planner_config(config))
+
     def test_all_supported_locales_build_with_content_hashed_assets(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             assets = build_frontend.write_localization_assets(Path(temp_dir))

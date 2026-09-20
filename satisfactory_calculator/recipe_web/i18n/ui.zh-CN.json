@@ -106,5 +106,6 @@
   "table.required": "需求量／分钟",
   "table.unit": "单位",
   "table.type": "类型",
-  "table.recipes": "使用的配方"
+  "table.recipes": "使用的配方",
+  "privacy.link": "隐私"
 }

@@ -47,10 +47,14 @@ jobs:
         run: python -m unittest discover -s satisfactory_calculator/tests -v
 
       - name: Check frontend syntax
-        run: node --check satisfactory_calculator/recipe_web/production_planner.js
+        run: |
+          node --check satisfactory_calculator/recipe_web/production_planner.js
+          node --check satisfactory_calculator/recipe_web/planner_analytics.js
 
       - name: Test frontend diagnostics
         run: node --test satisfactory_calculator/tests/planner_diagnostics.test.cjs
+      - name: Test usage analytics
+        run: pnpm test:analytics
 
       - name: Build frontend bundle
         run: python scripts/build_frontend.py

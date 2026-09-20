@@ -584,10 +584,12 @@ def static_file_path(path: str) -> Path | None:
         return STATIC_DIR / "production_planner.html"
     allowed_root_files = {
         "/production_planner.html",
+        "/privacy.html",
         "/production_planner.css",
         "/production_planner.js",
         "/planner_config.js",
         "/planner_i18n.js",
+        "/planner_analytics.js",
         "/planner_diagnostics.js",
         "/material_picker.js",
         "/robots.txt",
@@ -607,7 +609,7 @@ def static_file_path(path: str) -> Path | None:
 
 
 def cache_control_for_static(file_path: Path) -> str:
-    if file_path.name == "production_planner.html":
+    if file_path.name in {"production_planner.html", "privacy.html"}:
         return "no-cache, max-age=0"
     if file_path.suffix.lower() in {".css", ".js"}:
         return "public, max-age=604800"

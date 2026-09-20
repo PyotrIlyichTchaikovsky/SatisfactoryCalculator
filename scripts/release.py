@@ -78,11 +78,16 @@ def https_origin(value):
     return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and parsed.path in ("", "/") and not parsed.query and not parsed.fragment
 
 
+def https_event_endpoint(value):
+    parsed = urlparse(value)
+    return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and parsed.path == "/events" and not parsed.query and not parsed.fragment
+
+
 class Config:
     def __init__(self):
         names = ["DEPLOY_ENVIRONMENT", "GCP_PROJECT_ID", "GCP_REGION", "CLOUD_RUN_SERVICE",
                  "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_PAGES_PROJECT", "CLOUDFLARE_API_TOKEN",
-                 "PUBLIC_SITE_URL", "PLANNER_API_BASE_URL", "SENTRY_DSN", "SENTRY_FRONTEND_DSN",
+                 "PUBLIC_SITE_URL", "PLANNER_API_BASE_URL", "PLANNER_ANALYTICS_ENDPOINT", "SENTRY_DSN", "SENTRY_FRONTEND_DSN",
                  "SENTRY_BROWSER_SCRIPT_URL", "PLANNER_MONITORING_TEST_TOKEN"]
         self.values = {name: os.getenv(name, "").strip() for name in names}
         for name, value in self.values.items():
@@ -94,7 +99,12 @@ class Config:
         for name in ("PUBLIC_SITE_URL", "PLANNER_API_BASE_URL"):
             require(https_origin(self.values[name]), f"{name} must be an HTTPS origin")
             self.values[name] = self.values[name].rstrip("/")
+        require(https_event_endpoint(self.values["PLANNER_ANALYTICS_ENDPOINT"]), "PLANNER_ANALYTICS_ENDPOINT must be an HTTPS /events URL")
+        self.values["PLANNER_ANALYTICS_ENDPOINT"] = self.values["PLANNER_ANALYTICS_ENDPOINT"].rstrip("/")
         require(self.values["PUBLIC_SITE_URL"] != self.values["PLANNER_API_BASE_URL"], "Frontend and API origins must be separate")
+        require(urlparse(self.values["PLANNER_ANALYTICS_ENDPOINT"]).netloc not in {
+            urlparse(self.values["PUBLIC_SITE_URL"]).netloc, urlparse(self.values["PLANNER_API_BASE_URL"]).netloc,
+        }, "Analytics collector must use a separate origin")
         require(len(self.values["PLANNER_MONITORING_TEST_TOKEN"]) >= 32, "Monitoring test token must contain at least 32 characters")
         for name in ("GCP_PROJECT_ID", "GCP_REGION", "CLOUD_RUN_SERVICE", "CLOUDFLARE_PAGES_PROJECT", "CLOUDFLARE_ACCOUNT_ID"):
             require(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", self.values[name]), f"Invalid {name}")
@@ -103,7 +113,7 @@ class Config:
         return self.values[name]
 
     def identity(self):
-        return {key: self[key] for key in ("GCP_PROJECT_ID", "GCP_REGION", "CLOUD_RUN_SERVICE", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_PAGES_PROJECT", "PUBLIC_SITE_URL", "PLANNER_API_BASE_URL")}
+        return {key: self[key] for key in ("GCP_PROJECT_ID", "GCP_REGION", "CLOUD_RUN_SERVICE", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_PAGES_PROJECT", "PUBLIC_SITE_URL", "PLANNER_API_BASE_URL", "PLANNER_ANALYTICS_ENDPOINT")}
 
 
 def validate_candidate(candidate, config):
@@ -118,6 +128,7 @@ def validate_candidate(candidate, config):
         require(candidate.get("stagingPassed") is True, "Candidate did not pass staging tests")
         stage = candidate["stagingIdentity"]
         require(stage["PUBLIC_SITE_URL"] != config["PUBLIC_SITE_URL"] and stage["PLANNER_API_BASE_URL"] != config["PLANNER_API_BASE_URL"], "Staging and production origins must differ")
+        require(stage["PLANNER_ANALYTICS_ENDPOINT"] != config["PLANNER_ANALYTICS_ENDPOINT"], "Staging and production analytics collectors must differ")
         require((stage["GCP_PROJECT_ID"], stage["GCP_REGION"], stage["CLOUD_RUN_SERVICE"]) != (config["GCP_PROJECT_ID"], config["GCP_REGION"], config["CLOUD_RUN_SERVICE"]), "Production cannot reuse staging's Cloud Run service")
         require((stage["CLOUDFLARE_ACCOUNT_ID"], stage["CLOUDFLARE_PAGES_PROJECT"]) != (config["CLOUDFLARE_ACCOUNT_ID"], config["CLOUDFLARE_PAGES_PROJECT"]), "Production cannot reuse staging's Pages project")
 
@@ -303,6 +314,7 @@ def check_live(config, expected, browser=True):
 
 def package_frontend(config, candidate):
     env = {"PLANNER_API_BASE_URL": config["PLANNER_API_BASE_URL"], "PUBLIC_SITE_URL": config["PUBLIC_SITE_URL"],
+           "PLANNER_ANALYTICS_ENDPOINT": config["PLANNER_ANALYTICS_ENDPOINT"],
            "SENTRY_DSN": config["SENTRY_FRONTEND_DSN"], "SENTRY_BROWSER_SCRIPT_URL": config["SENTRY_BROWSER_SCRIPT_URL"],
            "SENTRY_ENVIRONMENT": config.environment, "SENTRY_RELEASE": candidate["sha"], "RELEASE_ID": candidate["releaseId"],
            "RELEASE_VERSION": candidate["version"],

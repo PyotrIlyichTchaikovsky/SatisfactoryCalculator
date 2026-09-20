@@ -1,0 +1,39 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "factor-tools-analytics-dev",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-09-20",
+  "workers_dev": true,
+  "keep_vars": true,
+  "vars": {
+    "ENVIRONMENT": "development",
+    "ALLOWED_ORIGINS": "http://127.0.0.1:8788"
+  },
+  "analytics_engine_datasets": [
+    { "binding": "USAGE_EVENTS", "dataset": "factor_tools_usage_development" }
+  ],
+  "env": {
+    "staging": {
+      "name": "factor-tools-analytics-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "ALLOWED_ORIGINS": "https://factor-tools-staging.pages.dev",
+        "ANALYTICS_DATASET": "factor_tools_usage_staging"
+      },
+      "analytics_engine_datasets": [
+        { "binding": "USAGE_EVENTS", "dataset": "factor_tools_usage_staging" }
+      ]
+    },
+    "production": {
+      "name": "factor-tools-analytics-production",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "ALLOWED_ORIGINS": "https://factor-tools.com",
+        "ANALYTICS_DATASET": "factor_tools_usage_production"
+      },
+      "analytics_engine_datasets": [
+        { "binding": "USAGE_EVENTS", "dataset": "factor_tools_usage_production" }
+      ]
+    }
+  }
+}

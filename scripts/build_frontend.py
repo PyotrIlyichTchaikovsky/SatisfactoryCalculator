@@ -16,7 +16,7 @@ OUTPUT_DIR = ROOT_DIR / "dist" / "frontend"
 
 
 def application_digest() -> str:
-    files = [SOURCE_DIR / name for name in ("production_planner.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx")]
+    files = [SOURCE_DIR / name for name in ("production_planner.html", "privacy.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_analytics.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx")]
     files += sorted((SOURCE_DIR / "i18n").glob("*.json"))
     files += sorted((SOURCE_DIR / "data" / "icons").rglob("*.png"))
     digest = hashlib.sha256()
@@ -52,6 +52,7 @@ def main() -> None:
     html = render_html(SOURCE_DIR / "production_planner.html", config, asset_names)
     (output_dir / "index.html").write_text(html, encoding="utf-8")
     (output_dir / "production_planner.html").write_text(html, encoding="utf-8")
+    shutil.copyfile(SOURCE_DIR / "privacy.html", output_dir / "privacy.html")
     (output_dir / "_headers").write_text(render_headers(config), encoding="utf-8")
     is_staging = config["sentryEnvironment"] == "staging"
     (output_dir / "robots.txt").write_text("User-agent: *\nDisallow: /\n" if is_staging else render_robots(config["publicSiteUrl"]), encoding="utf-8")
@@ -70,6 +71,7 @@ def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str
     assets = {
         "production_planner.css": (SOURCE_DIR / "production_planner.css").read_bytes(),
         "planner_diagnostics.js": (SOURCE_DIR / "planner_diagnostics.js").read_bytes(),
+        "planner_analytics.js": (SOURCE_DIR / "planner_analytics.js").read_bytes(),
         "material_picker.js": (SOURCE_DIR / "material_picker.js").read_bytes(),
         "production_planner.js": (SOURCE_DIR / "production_planner.js").read_bytes(),
         "planner_i18n.js": (SOURCE_DIR / "planner_i18n.js").read_bytes(),
@@ -130,6 +132,7 @@ def frontend_config() -> dict[str, object]:
         "adsenseEnabled": env_bool("ADSENSE_ENABLED", bool(adsense_client)),
         "publicSiteUrl": normalize_site_url(env("PUBLIC_SITE_URL")),
         "sentryBrowserScriptUrl": env("SENTRY_BROWSER_SCRIPT_URL"),
+        "analyticsEndpoint": normalize_event_endpoint(env("PLANNER_ANALYTICS_ENDPOINT")),
     }
 
 
@@ -177,6 +180,7 @@ def render_planner_config(config: dict[str, object]) -> str:
         "sentryRelease": config["sentryRelease"],
         "adsenseClient": config["adsenseClient"],
         "adsenseEnabled": config["adsenseEnabled"],
+        "analyticsEndpoint": config["analyticsEndpoint"],
         "localizationAssets": config.get("localizationAssets", {}),
     }
     return "window.PLANNER_CONFIG = " + json.dumps(public_config, ensure_ascii=False, indent=2) + ";\n"
@@ -230,6 +234,10 @@ def content_security_policy(config: dict[str, object]) -> str:
     api_origin = origin_from_url(str(config["apiBaseUrl"]))
     if api_origin:
         connect_src.append(api_origin)
+
+    analytics_origin = origin_from_url(str(config.get("analyticsEndpoint", "")))
+    if analytics_origin:
+        connect_src.append(analytics_origin)
 
     sentry_script_origin = origin_from_url(str(config["sentryBrowserScriptUrl"]))
     if sentry_script_origin:
@@ -348,6 +356,15 @@ def env_bool(name: str, default: bool = False) -> bool:
 def normalize_site_url(value: str) -> str:
     if not value:
         return ""
+    return value.rstrip("/")
+
+
+def normalize_event_endpoint(value: str) -> str:
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise SystemExit("PLANNER_ANALYTICS_ENDPOINT must be an HTTPS URL without credentials, query, or fragment")
     return value.rstrip("/")
 
 

@@ -23,6 +23,38 @@ body {
   min-height: 100%;
 }
 
+.analytics-test-banner {
+  align-items: center;
+  background: #4a2500;
+  border-bottom: 1px solid #ffb45e;
+  color: #fff4e6;
+  display: flex;
+  font-size: 0.9rem;
+  gap: 1rem;
+  justify-content: center;
+  padding: 0.55rem 1rem;
+}
+
+.analytics-test-banner button {
+  background: #fff4e6;
+  border: 0;
+  border-radius: 0.35rem;
+  color: #4a2500;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0.35rem 0.65rem;
+}
+
+.app-footer {
+  padding: 4px 24px 24px;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.app-footer a {
+  color: var(--muted-text, #9ca3af);
+}
+
 body {
   margin: 0;
   background: var(--bg);

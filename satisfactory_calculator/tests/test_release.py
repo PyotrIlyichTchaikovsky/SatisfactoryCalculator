@@ -20,13 +20,13 @@ class ReleaseTransactionTests(unittest.TestCase):
         self.work_patch.start()
         self.env = {"DEPLOY_ENVIRONMENT":"production", "GCP_PROJECT_ID":"project", "GCP_REGION":"asia-east1",
             "CLOUD_RUN_SERVICE":"planner-prod", "CLOUDFLARE_ACCOUNT_ID":"account", "CLOUDFLARE_PAGES_PROJECT":"planner-prod",
-            "CLOUDFLARE_API_TOKEN":"secret-value", "PUBLIC_SITE_URL":"https://prod.example", "PLANNER_API_BASE_URL":"https://api.example",
+            "CLOUDFLARE_API_TOKEN":"secret-value", "PUBLIC_SITE_URL":"https://prod.example", "PLANNER_API_BASE_URL":"https://api.example", "PLANNER_ANALYTICS_ENDPOINT":"https://analytics.example/events",
             "SENTRY_DSN":"https://public@example.invalid/1", "SENTRY_FRONTEND_DSN":"https://public@example.invalid/2",
             "SENTRY_BROWSER_SCRIPT_URL":"https://cdn.example/sdk.js", "PLANNER_MONITORING_TEST_TOKEN":"x"*32}
         self.env_patch = patch.dict(os.environ,self.env,clear=True)
         self.env_patch.start()
         self.config = release.Config()
-        self.stage = dict(self.config.identity(),CLOUD_RUN_SERVICE="planner-stage",CLOUDFLARE_PAGES_PROJECT="planner-stage",PUBLIC_SITE_URL="https://stage.example",PLANNER_API_BASE_URL="https://stage-api.example")
+        self.stage = dict(self.config.identity(),CLOUD_RUN_SERVICE="planner-stage",CLOUDFLARE_PAGES_PROJECT="planner-stage",PUBLIC_SITE_URL="https://stage.example",PLANNER_API_BASE_URL="https://stage-api.example",PLANNER_ANALYTICS_ENDPOINT="https://stage-analytics.example/events")
         self.candidate = {"schema":1,"sha":"a"*40,"releaseId":"123-1","image":"asia-east1-docker.pkg.dev/project/images/planner@sha256:"+"b"*64,
                           "version":"v2026.09.14.42.1","applicationDigest":"c"*64,"dataVersion":"d"*16,
                           "localizationVersion":"e"*16,
@@ -168,4 +168,7 @@ class ReleaseTransactionTests(unittest.TestCase):
     def test_https_configuration_validation(self):
         for invalid in ("http://api.example","https://user:secret@api.example","https://api.example/path","https://api.example?token=secret"):
             with patch.dict(os.environ,PLANNER_API_BASE_URL=invalid):
+                with self.assertRaises(release.ReleaseError): release.Config()
+        for invalid in ("http://analytics.example/events", "https://analytics.example/", "https://analytics.example/events?token=secret"):
+            with patch.dict(os.environ,PLANNER_ANALYTICS_ENDPOINT=invalid):
                 with self.assertRaises(release.ReleaseError): release.Config()

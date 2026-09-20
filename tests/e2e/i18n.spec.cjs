@@ -1,8 +1,10 @@
 const {test, expect} = require('@playwright/test');
 
 test('Simplified Chinese localizes UI, official game names, search, and calculation results', async ({page}) => {
-  const response = await page.goto('/?lang=zh-CN');
+  const response = await page.goto('/?lang=zh-CN&analytics_test=1');
   expect(response.ok()).toBeTruthy();
+  await expect(page.locator('.analytics-test-banner')).toBeVisible();
+  expect(await page.evaluate(() => window.PlannerAnalytics.isSynthetic())).toBe(true);
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
   await expect(page.locator('#languageSelect')).toHaveValue('zh-CN');
   await expect(page.getByRole('heading', {name: '生产目标'})).toBeVisible();

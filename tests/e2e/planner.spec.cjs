@@ -36,7 +36,7 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
       ? `Release test environment · Version ${manifest.version}`
       : `Version ${manifest.version}`;
     await expect.poll(async()=>{
-      response=await page.goto(`/?release=${encodeURIComponent(expectedSha)}&attempt=${Date.now()}`,{waitUntil:'domcontentloaded'});
+      response=await page.goto(`/?release=${encodeURIComponent(expectedSha)}&attempt=${Date.now()}&analytics_test=1`,{waitUntil:'domcontentloaded'});
       if(!response?.ok()) return '';
       return await page.locator('#releaseLabel').textContent().catch(()=> '');
     },{timeout:60000,message:'Wait for the fixed site URL to serve the candidate HTML'}).toBe(expectedLabel);
@@ -44,9 +44,11 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
     failures.length=0;
     response=await page.reload({waitUntil:'load'});
   } else {
-    response=await page.goto('/');
+    response=await page.goto('/?analytics_test=1');
   }
   expect(response.ok()).toBeTruthy();
+  await expect(page.locator('.analytics-test-banner')).toBeVisible();
+  expect(await page.evaluate(() => window.PlannerAnalytics.isSynthetic())).toBe(true);
   await expect(page.locator('#dataSummary')).toContainText('recipes');
   if(expectedSha) expect(manifest.sha).toBe(expectedSha);
   if(!legacy) expect(manifest.version).toMatch(/^v\d{4}\.\d{2}\.\d{2}\.\d+\.\d+$/);

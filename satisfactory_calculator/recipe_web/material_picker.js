@@ -49,6 +49,8 @@
 
   function open(options = {}) {
     close();
+    const analytics = window.PlannerAnalytics || { track: () => false };
+    analytics.track("material_picker_opened", { context: options.analyticsContext || "unknown" });
     const sourceItems = Array.isArray(options.items) ? options.items : [];
     const filter = typeof options.filter === "function" ? options.filter : () => true;
     const items = sourceItems
@@ -209,6 +211,11 @@
           }
           card.addEventListener("click", () => {
             recentIds = saveRecentId(item.className, recentIds);
+            analytics.track("material_selected", {
+              context: options.analyticsContext || "unknown",
+              itemClass: item.className,
+              category: activeCategory,
+            });
             finish({ id: item.className, item });
           });
           grid.appendChild(card);

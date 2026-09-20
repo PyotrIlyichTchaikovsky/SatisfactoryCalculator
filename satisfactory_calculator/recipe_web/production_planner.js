@@ -55,6 +55,8 @@
   let lastServerResult = null;
   let lastServerTargets = [];
   let lastServerPlanSignature = "";
+  const plannerLoadStartedAt = performance.now();
+  const analytics = window.PlannerAnalytics || { track: () => false };
 
   addTargetButton.addEventListener("click", () => addTargetRow());
   savePlanButton?.addEventListener("click", saveCurrentTargetPlan);
@@ -128,6 +130,10 @@
       window.PlannerDiagnostics.setDataSummary(summary);
       dataSummary.textContent = summaryText(summary);
       setStatus(t("status.loaded"), false);
+      analytics.track("planner_ready", {
+        durationMs: performance.now() - plannerLoadStartedAt,
+        recipeCount: summary?.recipeCount,
+      });
     } catch (error) {
       window.PlannerDiagnostics.reportError(error, "load-data");
       if (!targetRows.querySelector(".target-row")) {
@@ -136,6 +142,10 @@
       renderTargetPlanSelectors();
       dataSummary.textContent = t("status.connectionFailed");
       setStatus(`Unable to load data: ${error.message} Please retry or use Report a problem.`, true);
+      analytics.track("planner_load_failed", {
+        durationMs: performance.now() - plannerLoadStartedAt,
+        reason: error?.name || "error",
+      });
     }
   }
 
@@ -154,6 +164,11 @@
     savePlannerState();
 
     let calculationResult = null;
+    const calculationStartedAt = performance.now();
+    analytics.track("calculation_started", {
+      targetCount: targets.length,
+      enabledRecipeCount: selectedRecipeIds.size,
+    });
     setStatus(t("status.calculating"), false);
     try {
       const result = await fetchJson("/api/plan", {
@@ -171,6 +186,10 @@
       });
       calculationResult = result;
       if (result.recipeExpansionRequired) {
+        analytics.track("recipe_expansion_required", {
+          durationMs: performance.now() - calculationStartedAt,
+          targetCount: targets.length,
+        });
         handleRecipeExpansionRequired(result, targets);
         return;
       }
@@ -191,6 +210,13 @@
         targets: formatInteger(targetCount), recipes: formatInteger(recipeRunCount),
         selected: formatInteger(selectedRecipeIds.size), external: formatNumber(externalInputRate), rows: formatInteger(totalRows),
       }), false);
+      analytics.track("calculation_succeeded", {
+        durationMs: performance.now() - calculationStartedAt,
+        targetCount,
+        recipeCount: recipeRunCount,
+        enabledRecipeCount: selectedRecipeIds.size,
+        resultRowCount: totalRows,
+      });
     } catch (error) {
       const issue = window.PlannerDiagnostics.reportError(error, "calculate-or-render", true, calculationResult);
       lastServerResult = null;
@@ -199,6 +225,11 @@
       setStatus(`Calculation failed: ${error.message} Problem ID: ${issue.id}. Use Report a problem to share details.`, true);
       treeView.replaceChildren(makeEmptyMessage(t("results.noPlan")));
       tableView.replaceChildren(makeEmptyMessage(t("results.noTable")));
+      analytics.track("calculation_failed", {
+        durationMs: performance.now() - calculationStartedAt,
+        targetCount: targets.length,
+        reason: error?.name || "error",
+      });
     }
   }
 
@@ -872,6 +903,7 @@
         description: t("targets.chooseTargetHelp"),
         initialId: row.dataset.itemClass || "",
         preferredCategory: "NormalMaterial",
+        analyticsContext: "target",
       });
       if (!selection) return;
       selectItem(row, selection.item);
@@ -888,6 +920,7 @@
     amountInput.addEventListener("input", handleTargetAmountInput);
 
     removeButton.addEventListener("click", () => {
+      analytics.track("target_removed");
       activatePlanCacheForCurrentTargets();
       row.remove();
       updateRemoveButtons();
@@ -2485,6 +2518,10 @@
   }
 
   function openRecipeFilterDialog(options = {}) {
+    analytics.track("recipe_filter_opened", {
+      context: options.materialClass ? "result_material" : "toolbar",
+      itemClass: options.materialClass || "",
+    });
     closeRecipeFilterDialog();
     let activeFocusTarget = normalizeRecipeFilterFocus(options.focusTarget);
     const activeRecipeIdFilter = normalizeRecipeIdSet(options.filterRecipeIds || options.requiredRecipeIds);
@@ -2587,6 +2624,7 @@
       updateRecipeFilterButton();
       renderCurrentRecipeFilterList();
       refreshRecipeFilterControls();
+      analytics.track("recipe_defaults_restored");
     });
     materialButton.addEventListener("click", async () => {
       const recipeMaterialIds = new Set(recipeCatalog.materials.map((group) => group.item?.className).filter(Boolean));
@@ -2596,6 +2634,7 @@
         title: t("recipes.chooseSearchMaterial"),
         description: t("recipes.chooseSearchHelp"),
         initialId: activeMaterialClass,
+        analyticsContext: "recipe_search",
       });
       if (!selection) return;
       activeMaterialClass = selection.id;
