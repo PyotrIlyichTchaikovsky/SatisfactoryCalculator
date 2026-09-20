@@ -47,6 +47,12 @@
   });
   let activePicker = null;
 
+  function compareProgression(left, right) {
+    const leftRank = Number.isFinite(Number(left?.progressionRank)) ? Number(left.progressionRank) : Number.MAX_SAFE_INTEGER;
+    const rightRank = Number.isFinite(Number(right?.progressionRank)) ? Number(right.progressionRank) : Number.MAX_SAFE_INTEGER;
+    return leftRank - rightRank || String(left?.className || "").localeCompare(String(right?.className || ""), "en");
+  }
+
   function open(options = {}) {
     close();
     const analytics = window.PlannerAnalytics || { track: () => false };
@@ -55,7 +61,7 @@
     const filter = typeof options.filter === "function" ? options.filter : () => true;
     const items = sourceItems
       .filter((item) => item?.className && filter(item))
-      .sort((left, right) => i18n().compare(left.name || left.className, right.name || right.className));
+      .sort(compareProgression);
     const previousFocus = document.activeElement;
 
     return new Promise((resolve) => {
@@ -175,7 +181,7 @@
             const tierDifference = ITEM_TIERS[left.className] - ITEM_TIERS[right.className];
             if (tierDifference) return tierDifference;
           }
-          return i18n().compare(left.name || left.className, right.name || right.className);
+          return compareProgression(left, right);
         });
         grid.replaceChildren();
         count.textContent = t("picker.count", { count: visible.length });

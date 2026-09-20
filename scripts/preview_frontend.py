@@ -8,6 +8,8 @@ import build_frontend
 
 
 class Handler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def end_headers(self):
         path = urlparse(self.path).path
         active = False

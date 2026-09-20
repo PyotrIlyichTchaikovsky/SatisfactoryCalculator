@@ -16,7 +16,7 @@ OUTPUT_DIR = ROOT_DIR / "dist" / "frontend"
 
 
 def application_digest() -> str:
-    files = [SOURCE_DIR / name for name in ("production_planner.html", "privacy.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_analytics.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx")]
+    files = [SOURCE_DIR / name for name in ("production_planner.html", "privacy.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_analytics.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx", "data/material_progression.json")]
     files += sorted((SOURCE_DIR / "i18n").glob("*.json"))
     files += sorted((SOURCE_DIR / "data" / "icons").rglob("*.png"))
     digest = hashlib.sha256()

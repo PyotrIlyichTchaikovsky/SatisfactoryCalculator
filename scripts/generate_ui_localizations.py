@@ -91,6 +91,7 @@ def main() -> None:
     for locale, values in COMMON.items():
         data = {key: value for key, value in zip(KEYS, values, strict=True)}
         data.update(ZH_EXTRA.get(locale, {}))
+        data = {key: value for key, value in data.items() if not key.startswith("diagnostics.")}
         (I18N / f"ui.{locale}.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )

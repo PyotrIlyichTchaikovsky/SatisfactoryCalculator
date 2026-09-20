@@ -12,7 +12,6 @@
     "calculation_started", "calculation_succeeded", "calculation_failed", "recipe_expansion_required",
     "recipe_filter_opened", "recipe_selection_changed", "recipe_defaults_restored",
     "result_view_changed", "layout_reset", "language_changed",
-    "problem_report_opened", "problem_report_copied", "problem_report_downloaded",
   ]);
   const DIMENSION_NAMES = new Set(["context", "itemClass", "category", "view", "outcome", "reason"]);
   const METRIC_NAMES = new Set(["durationMs", "targetCount", "recipeCount", "enabledRecipeCount", "resultRowCount"]);
@@ -133,8 +132,6 @@
     const clickEvents = new Map([
       ["addTargetButton", "target_added"], ["savePlanButton", "plan_saved"],
       ["resetLayoutButton", "layout_reset"],
-      ["reportProblemButton", "problem_report_opened"], ["copyDiagnosticsButton", "problem_report_copied"],
-      ["downloadDiagnosticsButton", "problem_report_downloaded"],
     ]);
     document.addEventListener("click", (event) => {
       const element = event.target instanceof Element ? event.target.closest("button,[data-plan-index]") : null;

@@ -53,7 +53,7 @@ https://你的生产域名/?monitoring_test=frontend
 ### 验收标准
 
 1. 页面显示的环境确实是你要测试的环境。
-2. 点击 **Report a problem**，报告中的 `lastIssue.id` 与页面编号一致，`monitoringTest` 为 true；复制/下载报告有效。
+2. 页面显示测试异常的 Problem ID；在 Sentry 中确认该事件的 `issue_id` 一致，且 `monitoring_test` 为 `true`。公开页面不提供人工报告入口。
 3. 在该前端 Sentry 项目中查询 `issue_id:页面编号`，看到 `Planner frontend monitoring test`，环境、release 正确，并带 `monitoring_test=true`。
 4. 在实际通知渠道收到告警，核对问题/事件链接。捕获或入队不等于通知已经送达。
 5. 移除 URL 标记后刷新，再正常计算一次，页面仍可使用。

@@ -30,10 +30,20 @@ LOCALES = {
     "uk-UA": "uk.json",
 }
 
-ANY_LABELS = {
-    "en-US": "Any", "fr-FR": "Tout combustible", "it-IT": "Qualsiasi", "de-DE": "Beliebig",
-    "es-ES": "Cualquiera", "ja-JP": "任意", "ko-KR": "전체", "pl-PL": "Dowolne",
-    "pt-BR": "Qualquer", "ru-RU": "Любое топливо", "zh-CN": "任意燃料", "zh-TW": "任意燃料", "uk-UA": "Будь-яке паливо",
+POWER_LABELS = {
+    "en-US": {"Biomass": "Biomass Power", "Coal": "Coal Power", "Fuel": "Fuel Power", "Geothermal": "Geothermal Power", "Nuclear": "Nuclear Power"},
+    "fr-FR": {"Biomass": "Énergie biomasse", "Coal": "Énergie au charbon", "Fuel": "Énergie au carburant", "Geothermal": "Énergie géothermique", "Nuclear": "Énergie nucléaire"},
+    "it-IT": {"Biomass": "Energia da biomassa", "Coal": "Energia a carbone", "Fuel": "Energia a combustibile", "Geothermal": "Energia geotermica", "Nuclear": "Energia nucleare"},
+    "de-DE": {"Biomass": "Biomassestrom", "Coal": "Kohlestrom", "Fuel": "Brennstoffstrom", "Geothermal": "Geothermie", "Nuclear": "Kernenergie"},
+    "es-ES": {"Biomass": "Energía de biomasa", "Coal": "Energía de carbón", "Fuel": "Energía de combustible", "Geothermal": "Energía geotérmica", "Nuclear": "Energía nuclear"},
+    "ja-JP": {"Biomass": "バイオマス発電", "Coal": "石炭発電", "Fuel": "燃料発電", "Geothermal": "地熱発電", "Nuclear": "原子力発電"},
+    "ko-KR": {"Biomass": "바이오매스 발전", "Coal": "석탄 발전", "Fuel": "연료 발전", "Geothermal": "지열 발전", "Nuclear": "원자력 발전"},
+    "pl-PL": {"Biomass": "Energia z biomasy", "Coal": "Energia z węgla", "Fuel": "Energia z paliwa", "Geothermal": "Energia geotermalna", "Nuclear": "Energia jądrowa"},
+    "pt-BR": {"Biomass": "Energia de biomassa", "Coal": "Energia a carvão", "Fuel": "Energia a combustível", "Geothermal": "Energia geotérmica", "Nuclear": "Energia nuclear"},
+    "ru-RU": {"Biomass": "Энергия из биомассы", "Coal": "Энергия из угля", "Fuel": "Энергия из топлива", "Geothermal": "Геотермальная энергия", "Nuclear": "Атомная энергия"},
+    "zh-CN": {"Biomass": "生物质发电", "Coal": "煤电", "Fuel": "燃油发电", "Geothermal": "地热发电", "Nuclear": "核电"},
+    "zh-TW": {"Biomass": "生質能發電", "Coal": "燃煤發電", "Fuel": "燃油發電", "Geothermal": "地熱發電", "Nuclear": "核能發電"},
+    "uk-UA": {"Biomass": "Енергія з біомаси", "Coal": "Енергія з вугілля", "Fuel": "Енергія з палива", "Geothermal": "Геотермальна енергія", "Nuclear": "Атомна енергія"},
 }
 
 
@@ -65,6 +75,8 @@ def add_synthetic_power_names(locale: str, names: dict[str, str], planner) -> No
         names[recipe.recipe_id] = f"{device_name} ({fuel_name})" if fuel_name else device_name
 
     for group in planner.power_groups:
+        group_key = group.group_class.removeprefix("Desc_Power_").removesuffix("_C")
+        power_name = POWER_LABELS[locale][group_key]
         device_class = ""
         for member_class in group.member_classes:
             recipe = next((candidate for candidate in planner.recipes if candidate.outputs and candidate.outputs[0].item_class == member_class), None)
@@ -73,10 +85,8 @@ def add_synthetic_power_names(locale: str, names: dict[str, str], planner) -> No
                 fuel = recipe.inputs[0] if recipe.inputs else None
                 device_name = names.get(device_class, planner.devices.get(device_class).name if device_class in planner.devices else group.group_name)
                 fuel_name = names.get(fuel.item_class, fuel.item_name) if fuel else device_name
-                names[member_class] = f"{device_name} ({fuel_name})"
-        representative = next((names.get(member) for member in group.member_classes if names.get(member)), group.group_name)
-        base_name = representative.rsplit(" (", 1)[0]
-        names[group.group_class] = f"{base_name} ({ANY_LABELS[locale]})"
+                names[member_class] = f"{power_name} ({fuel_name})"
+        names[group.group_class] = power_name
     for item_class in planner.items:
         if item_class in names:
             continue

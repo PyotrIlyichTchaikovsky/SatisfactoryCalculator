@@ -1,6 +1,6 @@
 const {test,expect} = require('@playwright/test');
 
-test('deployed page calculates, draws, saves, restores and produces a correlated report', async ({page,request}) => {
+test('deployed page calculates, draws, saves, restores and has no manual report UI', async ({page,request}) => {
   const failures=[];
   const apiOrigin=new URL(process.env.API_URL).origin;
   const expectedSha=process.env.EXPECTED_SHA || '';
@@ -165,14 +165,8 @@ test('deployed page calculates, draws, saves, restores and produces a correlated
   const restoredPlan=await restoredPlanResponse;
   const restoredResult=await restoredPlan.json();
   expect(restoredResult.recipeRuns.some(run=>run.id==='Recipe_Alternate_SteelCastedPlate_C')).toBeTruthy();
-  if(!legacy) {
-  await page.getByRole('button',{name:'Report a problem',exact:true}).click();
-  const report=JSON.parse(await page.locator('#diagnosticsOutput').inputValue());
-  if(!legacy) expect(report.frontendRelease).toBe(manifest.sha);
-  if(!legacy) expect(report.environment).toBe(manifest.environment);
-  expect(report.recentRequests.every(r=>r.requestId)).toBeTruthy();
-  await page.getByRole('button',{name:'Close',exact:true}).click();
-  }
+  await expect(page.getByRole('button',{name:'Report a problem',exact:true})).toHaveCount(0);
+  await expect(page.locator('#diagnosticsDialog')).toHaveCount(0);
   expect(apiRequests.length).toBeGreaterThan(3);
   expect(apiRequests.every(url=>new URL(url).origin===apiOrigin)).toBeTruthy();
   expect(failures).toEqual([]);

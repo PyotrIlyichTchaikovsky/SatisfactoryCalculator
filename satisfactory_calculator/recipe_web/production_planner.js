@@ -78,13 +78,6 @@
   });
   window.addEventListener("resize", handleWindowResize);
 
-  window.PlannerDiagnostics.configure(() => ({
-    targets: collectTargetState(),
-    enabledRecipeIds: selectedRecipeIdsPayload(),
-    disabledRawMaterialClasses: disabledRawMaterialClassesPayload(),
-    recipeNodePositions: Array.from(recipeNodePositions.entries()),
-    activeTab,
-  }));
   try {
     restorePreferredPlanCache(savedState.selectionCacheVersion === SELECTION_CACHE_VERSION ? savedState.preferredPlanByTarget : []);
     restoreRecipeNodePositions(savedState.recipeNodePositions);
@@ -127,7 +120,6 @@
       if (recipeFilterButton) recipeFilterButton.disabled = false;
       if (calculateButton) calculateButton.disabled = false;
       activatePlanCacheForCurrentTargets();
-      window.PlannerDiagnostics.setDataSummary(summary);
       dataSummary.textContent = summaryText(summary);
       setStatus(t("status.loaded"), false);
       analytics.track("planner_ready", {
@@ -141,7 +133,7 @@
       }
       renderTargetPlanSelectors();
       dataSummary.textContent = t("status.connectionFailed");
-      setStatus(`Unable to load data: ${error.message} Please retry or use Report a problem.`, true);
+      setStatus(`Unable to load data: ${error.message} Please retry.`, true);
       analytics.track("planner_load_failed", {
         durationMs: performance.now() - plannerLoadStartedAt,
         reason: error?.name || "error",
@@ -222,7 +214,7 @@
       lastServerResult = null;
       lastServerTargets = [];
       lastServerPlanSignature = "";
-      setStatus(`Calculation failed: ${error.message} Problem ID: ${issue.id}. Use Report a problem to share details.`, true);
+      setStatus(`Calculation failed: ${error.message} Problem ID: ${issue.id}.`, true);
       treeView.replaceChildren(makeEmptyMessage(t("results.noPlan")));
       tableView.replaceChildren(makeEmptyMessage(t("results.noTable")));
       analytics.track("calculation_failed", {

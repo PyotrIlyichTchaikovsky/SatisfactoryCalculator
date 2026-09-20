@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import warnings
@@ -22,6 +23,24 @@ except ImportError:  # pragma: no cover - handled at runtime with a clear planne
 
 
 DEFAULT_EXCEL_PATH = Path(__file__).resolve().parent / "data" / "Data.xlsx"
+DEFAULT_MATERIAL_PROGRESSION_PATH = Path(__file__).resolve().parent / "data" / "material_progression.json"
+
+
+def _load_material_progression() -> dict[str, int]:
+    try:
+        payload = json.loads(DEFAULT_MATERIAL_PROGRESSION_PATH.read_text(encoding="utf-8"))
+        items = payload["items"]
+        if not isinstance(items, list) or not all(isinstance(item, str) and item for item in items):
+            raise ValueError("items must be a list of non-empty class names")
+        if len(items) != len(set(items)):
+            raise ValueError("item class names must be unique")
+        return {class_name: rank for rank, class_name in enumerate(items)}
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Invalid material progression data: {error}") from error
+
+
+_MATERIAL_PROGRESSION_RANKS = _load_material_progression()
+_UNKNOWN_MATERIAL_PROGRESSION_RANK = 1_000_000
 
 _MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -1626,6 +1645,9 @@ class ProductionPlanner:
             "isRawResource": item.is_raw_resource,
             "producible": item.producible,
             "iconPath": _static_data_path(item.icon_path) if item.icon_path else "",
+            "progressionRank": _MATERIAL_PROGRESSION_RANKS.get(
+                item.class_name, _UNKNOWN_MATERIAL_PROGRESSION_RANK
+            ),
         }
 
     def _recipe_to_dict(self, recipe: Recipe) -> dict[str, Any]:

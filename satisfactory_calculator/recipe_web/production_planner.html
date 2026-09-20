@@ -68,7 +68,6 @@
       <div class="result-toolbar">
         <h2 id="resultHeading" data-i18n="results.title">Results</h2>
         <div class="result-actions">
-          <button id="reportProblemButton" class="secondary-button compact-button" type="button" data-i18n="diagnostics.report">Report a problem</button>
           <button id="resetLayoutButton" class="secondary-button compact-button" type="button" data-i18n="results.resetLayout">Reset Layout</button>
           <div class="tabs" role="tablist" aria-label="Result views" data-i18n-aria-label="results.views">
             <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true" data-i18n="results.planView">Plan View</button>
@@ -86,19 +85,6 @@
   <footer class="app-footer">
     <a href="privacy.html" data-i18n="privacy.link">Privacy</a>
   </footer>
-
-  <dialog id="diagnosticsDialog" class="diagnostics-dialog" aria-labelledby="diagnosticsTitle">
-    <h2 id="diagnosticsTitle" data-i18n="diagnostics.report">Report a problem</h2>
-    <p id="diagnosticsNotice" role="status"></p>
-    <label for="diagnosticsOutput" data-i18n="diagnostics.details">Technical details and plan inputs</label>
-    <textarea id="diagnosticsOutput" readonly rows="12" spellcheck="false"></textarea>
-    <div class="panel-actions">
-      <button id="copyDiagnosticsButton" class="secondary-button" type="button" data-i18n="diagnostics.copy">Copy report</button>
-      <button id="downloadDiagnosticsButton" class="secondary-button" type="button" data-i18n="diagnostics.download">Download report</button>
-      <a href="https://github.com/PyotrIlyichTchaikovsky/SatisfactoryCalculator/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer" data-i18n="diagnostics.github">Open GitHub issue</a>
-      <form method="dialog"><button class="secondary-button" data-i18n="diagnostics.close">Close</button></form>
-    </div>
-  </dialog>
 
   <template id="targetRowTemplate">
     <div class="target-row">

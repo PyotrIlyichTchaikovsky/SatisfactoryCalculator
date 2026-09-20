@@ -7,6 +7,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import build_frontend
+import generate_localizations
 
 
 class FrontendMonitoringBuildTests(unittest.TestCase):
@@ -32,6 +33,20 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
     def test_analytics_loads_before_interactive_components(self):
         html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
         self.assertLess(html.index('src="planner_analytics.js'), html.index('src="material_picker.js'))
+
+    def test_frontend_does_not_expose_repository_or_manual_report_ui(self):
+        source_files = [
+            build_frontend.SOURCE_DIR / "production_planner.html",
+            build_frontend.SOURCE_DIR / "production_planner.js",
+            build_frontend.SOURCE_DIR / "planner_diagnostics.js",
+            build_frontend.SOURCE_DIR / "planner_analytics.js",
+            *sorted((build_frontend.SOURCE_DIR / "i18n").glob("ui.*.json")),
+        ]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
+        self.assertNotIn("github.com", combined.lower())
+        self.assertNotIn("PyotrIlyichTchaikovsky", combined)
+        self.assertNotIn("reportProblemButton", combined)
+        self.assertNotIn("diagnosticsDialog", combined)
 
     def test_privacy_notice_describes_anonymous_analytics(self):
         privacy = (build_frontend.SOURCE_DIR / "privacy.html").read_text(encoding="utf-8")
@@ -62,6 +77,20 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
             self.assertEqual(coverage["items"], coverage["itemsExpected"])
             self.assertEqual(coverage["recipes"], coverage["recipesExpected"])
             self.assertEqual(coverage["devices"], coverage["devicesExpected"])
+
+    def test_synthetic_power_items_describe_power_instead_of_buildings(self):
+        for locale, labels in generate_localizations.POWER_LABELS.items():
+            payload = json.loads((build_frontend.SOURCE_DIR / "i18n" / f"game.{locale}.json").read_text(encoding="utf-8"))
+            for group, label in labels.items():
+                group_class = f"Desc_Power_{group}_C"
+                with self.subTest(locale=locale, group=group):
+                    self.assertEqual(payload["items"][group_class], label)
+                    member_names = [
+                        value for key, value in payload["items"].items()
+                        if key != group_class and key.startswith(f"Desc_Power_{group}_")
+                    ]
+                    self.assertTrue(member_names)
+                    self.assertTrue(all(name.startswith(f"{label} (") for name in member_names))
 
 
 class ReleaseFrontendTests(unittest.TestCase):

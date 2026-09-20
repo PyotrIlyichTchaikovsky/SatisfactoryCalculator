@@ -123,7 +123,7 @@ metrics, and plan caching.
 
 ## Bug reports and monitoring
 
-Use **Report a problem** in the planner to review and copy/download a diagnostic report.
+Unexpected frontend and backend errors are reported automatically with a correlation ID. The public planner does not expose a manual issue-report form or repository link.
 See [monitoring setup and acceptance checks](deploy/MONITORING.md) for request IDs,
 Sentry, persistent Cloud Logging metrics and real calculation checks.
 

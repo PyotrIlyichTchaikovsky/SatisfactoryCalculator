@@ -29,6 +29,20 @@ class ProductionPlannerCoreTests(unittest.TestCase):
         self.assertGreater(summary["recipeCount"], 0)
         self.assertGreater(summary["itemCount"], 0)
 
+    def test_material_progression_is_stable_and_follows_game_unlocks(self) -> None:
+        items = {item["className"]: item for item in self.planner.list_items()}
+        ranks = [item["progressionRank"] for item in items.values()]
+
+        self.assertTrue(all(isinstance(rank, int) for rank in ranks))
+        self.assertNotIn(1_000_000, ranks)
+        self.assertEqual(len(ranks), len(set(ranks)))
+        self.assertLess(items["Desc_OreIron_C"]["progressionRank"], items["Desc_IronIngot_C"]["progressionRank"])
+        self.assertLess(items["Desc_IronIngot_C"]["progressionRank"], items["Desc_IronPlate_C"]["progressionRank"])
+        self.assertLess(items["Desc_OreCopper_C"]["progressionRank"], items["Desc_CopperIngot_C"]["progressionRank"])
+        self.assertLess(items["Desc_Coal_C"]["progressionRank"], items["Desc_SteelIngot_C"]["progressionRank"])
+        self.assertLess(items["Desc_LiquidOil_C"]["progressionRank"], items["Desc_Plastic_C"]["progressionRank"])
+        self.assertLess(items["Desc_OreBauxite_C"]["progressionRank"], items["Desc_AluminumIngot_C"]["progressionRank"])
+
     def test_default_recipes_can_plan_rocket_fuel_targets(self) -> None:
         for item_class in ["Desc_RocketFuel_C", "Desc_Power_Fuel_RocketFuel_C"]:
             with self.subTest(item_class=item_class):

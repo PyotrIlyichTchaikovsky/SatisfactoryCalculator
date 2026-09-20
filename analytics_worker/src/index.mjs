@@ -5,7 +5,6 @@ const EVENT_NAMES = new Set([
   "calculation_started", "calculation_succeeded", "calculation_failed", "recipe_expansion_required",
   "recipe_filter_opened", "recipe_selection_changed", "recipe_defaults_restored",
   "result_view_changed", "layout_reset", "language_changed",
-  "problem_report_opened", "problem_report_copied", "problem_report_downloaded",
 ]);
 const DIMENSIONS = ["context", "itemClass", "category", "view", "outcome", "reason"];
 const METRICS = ["durationMs", "targetCount", "recipeCount", "enabledRecipeCount", "resultRowCount"];
