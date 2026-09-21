@@ -42,9 +42,11 @@ WHERE timestamp >= NOW() - INTERVAL '7' DAY AND double1 = 0
 GROUP BY event_name ORDER BY event_count DESC;
 ```
 
-Deploy only after the frontend has passed local review. Use separate endpoints
-for staging and production, then set each GitHub Environment variable named
-`PLANNER_ANALYTICS_ENDPOINT` to its matching `/events` URL.
+Deploy only after the frontend has passed local review. Staging and production
+use separate collectors. The release workflow deploys the environment's Worker
+first, reads the `workers.dev` URL reported by Wrangler, and supplies its
+matching `/events` URL to the frontend build automatically. No GitHub
+Environment variable is needed for the collector endpoint.
 
 ## Viewing custom statistics
 
