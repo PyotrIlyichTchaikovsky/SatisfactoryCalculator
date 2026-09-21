@@ -18,6 +18,7 @@
       "vars": {
         "ENVIRONMENT": "staging",
         "ALLOWED_ORIGINS": "https://factor-tools-staging.pages.dev",
+        "ANALYTICS_ACCOUNT_ID": "7404d4c0a2853bbe7031ae561a513901",
         "ANALYTICS_DATASET": "factor_tools_usage_staging"
       },
       "analytics_engine_datasets": [
@@ -29,6 +30,7 @@
       "vars": {
         "ENVIRONMENT": "production",
         "ALLOWED_ORIGINS": "https://factor-tools.com",
+        "ANALYTICS_ACCOUNT_ID": "7404d4c0a2853bbe7031ae561a513901",
         "ANALYTICS_DATASET": "factor_tools_usage_production"
       },
       "analytics_engine_datasets": [

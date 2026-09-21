@@ -58,7 +58,38 @@ test("dashboard queries always exclude synthetic traffic", () => {
   assert.throws(() => dashboardQueries("factor_tools_usage_production", 365));
 });
 
-test("dashboard requires a valid Cloudflare Access identity", async () => {
-  const response = await worker.fetch(new Request("https://analytics.example/dashboard"), {});
-  assert.equal(response.status, 503);
+test("dashboard is public but exposes only its fixed aggregate view", async () => {
+  const response = await worker.fetch(new Request("https://analytics.example/dashboard"), {ENVIRONMENT: "staging"});
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Factor Tools 使用统计/);
+  assert.doesNotMatch(html, /visitorId|ANALYTICS_READ_TOKEN/);
+});
+
+test("dashboard summary normalizes cache keys and caches fixed queries", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCaches = globalThis.caches;
+  const stored = new Map();
+  let queries = 0;
+  globalThis.fetch = async () => {
+    queries += 1;
+    return new Response(JSON.stringify({data: []}), {status: 200, headers: {"Content-Type": "application/json"}});
+  };
+  globalThis.caches = {default: {
+    async match(request) { return stored.get(request.url)?.clone(); },
+    async put(request, response) { stored.set(request.url, response.clone()); },
+  }};
+  try {
+    const env = {ENVIRONMENT: "staging", ANALYTICS_DATASET: "factor_tools_usage_staging", ANALYTICS_ACCOUNT_ID: "account", ANALYTICS_READ_TOKEN: "secret"};
+    const first = await worker.fetch(new Request("https://analytics.example/dashboard/api/summary?days=7&ignored=value"), env);
+    const second = await worker.fetch(new Request("https://analytics.example/dashboard/api/summary?days=7"), env);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(first.headers.get("Cache-Control"), "public, max-age=300");
+    assert.equal(queries, 4);
+    assert.equal(stored.size, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.caches = originalCaches;
+  }
 });

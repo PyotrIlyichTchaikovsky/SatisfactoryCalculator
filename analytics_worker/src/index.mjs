@@ -12,27 +12,18 @@ const MAX_BODY_BYTES = 16_384;
 const MAX_EVENTS = 20;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
       return json({ ok: true, environment: env.ENVIRONMENT || "unknown" });
     }
     if (request.method === "GET" && url.pathname === "/dashboard") {
-      const identity = await requireDashboardAccess(request, env);
-      if (!identity.ok) return identity.response;
       return dashboardHtml(env.ENVIRONMENT || "unknown");
     }
     if (request.method === "GET" && url.pathname === "/dashboard/api/summary") {
-      const identity = await requireDashboardAccess(request, env);
-      if (!identity.ok) return identity.response;
       const days = [1, 7, 30, 90].includes(Number(url.searchParams.get("days")))
         ? Number(url.searchParams.get("days")) : 7;
-      try {
-        return json(await loadDashboardSummary(env, days));
-      } catch (error) {
-        console.error("analytics dashboard query failed", error);
-        return json({ error: "Unable to load analytics data" }, 502);
-      }
+      return dashboardSummaryResponse(request, env, days, ctx);
     }
     if (url.pathname !== "/events") return json({ error: "Not found" }, 404);
     const origin = request.headers.get("Origin") || "";
@@ -87,61 +78,26 @@ async function loadDashboardSummary(env, days) {
   return { environment: env.ENVIRONMENT, days, generatedAt: new Date().toISOString(), ...Object.fromEntries(entries) };
 }
 
-let accessKeysCache = null;
-let accessKeysExpiresAt = 0;
-
-async function requireDashboardAccess(request, env) {
-  if (!env.CF_ACCESS_TEAM_DOMAIN || !env.CF_ACCESS_AUD) {
-    return { ok: false, response: json({ error: "Dashboard access is not configured" }, 503) };
-  }
-  const token = request.headers.get("Cf-Access-Jwt-Assertion") || "";
-  const parts = token.split(".");
-  if (parts.length !== 3) return { ok: false, response: json({ error: "Authentication required" }, 401) };
+async function dashboardSummaryResponse(request, env, days, ctx) {
+  const cache = globalThis.caches?.default;
+  const sourceUrl = new URL(request.url);
+  const cacheKey = new Request(`${sourceUrl.origin}/dashboard/api/summary?days=${days}`);
   try {
-    const header = decodeJwtPart(parts[0]);
-    const payload = decodeJwtPart(parts[1]);
-    const teamDomain = String(env.CF_ACCESS_TEAM_DOMAIN).replace(/^https?:\/\//, "").replace(/\/$/, "");
-    const expectedIssuer = `https://${teamDomain}`;
-    const audience = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    const now = Math.floor(Date.now() / 1000);
-    if (header.alg !== "RS256" || payload.iss !== expectedIssuer || !audience.includes(env.CF_ACCESS_AUD)
-        || Number(payload.exp || 0) <= now || Number(payload.nbf || 0) > now + 30) throw new Error("Invalid Access claims");
-    const keys = await accessKeys(teamDomain);
-    const jwk = keys.find((candidate) => candidate.kid === header.kid);
-    if (!jwk) throw new Error("Unknown Access signing key");
-    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
-    const verified = await crypto.subtle.verify(
-      "RSASSA-PKCS1-v1_5", key, base64UrlBytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
-    );
-    if (!verified) throw new Error("Invalid Access signature");
-    const allowedEmails = String(env.ADMIN_EMAILS || "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
-    if (allowedEmails.length && !allowedEmails.includes(String(payload.email || "").toLowerCase())) {
-      return { ok: false, response: json({ error: "Account is not allowed" }, 403) };
+    const cached = cache ? await cache.match(cacheKey) : null;
+    if (cached) return cached;
+    const response = json(await loadDashboardSummary(env, days), 200, {
+      "Cache-Control": "public, max-age=300",
+    });
+    if (cache) {
+      const write = cache.put(cacheKey, response.clone());
+      if (ctx?.waitUntil) ctx.waitUntil(write);
+      else await write;
     }
-    return { ok: true, email: payload.email || "" };
-  } catch (_error) {
-    return { ok: false, response: json({ error: "Authentication required" }, 401) };
+    return response;
+  } catch (error) {
+    console.error("analytics dashboard query failed", error);
+    return json({ error: "Unable to load analytics data" }, 502);
   }
-}
-
-async function accessKeys(teamDomain) {
-  if (accessKeysCache && Date.now() < accessKeysExpiresAt) return accessKeysCache;
-  const response = await fetch(`https://${teamDomain}/cdn-cgi/access/certs`);
-  if (!response.ok) throw new Error("Unable to load Access keys");
-  const body = await response.json();
-  accessKeysCache = Array.isArray(body.keys) ? body.keys : [];
-  accessKeysExpiresAt = Date.now() + 60 * 60 * 1000;
-  return accessKeysCache;
-}
-
-function decodeJwtPart(value) {
-  return JSON.parse(new TextDecoder().decode(base64UrlBytes(value)));
-}
-
-function base64UrlBytes(value) {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const decoded = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="));
-  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
 }
 
 function dashboardHtml(environment) {

@@ -72,6 +72,16 @@ jobs:
             echo "Wrangler did not report the deployed analytics Worker URL." >&2
             exit 1
           fi
+          for attempt in {1..10}; do
+            if curl --fail --silent --show-error "${worker_origin%/}/dashboard/api/summary?days=1" >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 10 ]]; then
+              echo "Staging analytics dashboard did not become readable." >&2
+              exit 1
+            fi
+            sleep 3
+          done
           echo "PLANNER_ANALYTICS_ENDPOINT=${worker_origin%/}/events" >> "$GITHUB_ENV"
       - name: Validate environment configuration
         run: python scripts/release.py validate
@@ -175,6 +185,16 @@ jobs:
             echo "Wrangler did not report the deployed analytics Worker URL." >&2
             exit 1
           fi
+          for attempt in {1..10}; do
+            if curl --fail --silent --show-error "${worker_origin%/}/dashboard/api/summary?days=1" >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 10 ]]; then
+              echo "Production analytics dashboard did not become readable." >&2
+              exit 1
+            fi
+            sleep 3
+          done
           echo "PLANNER_ANALYTICS_ENDPOINT=${worker_origin%/}/events" >> "$GITHUB_ENV"
       - name: Validate environment configuration
         run: python scripts/release.py validate

@@ -50,23 +50,17 @@ Environment variable is needed for the collector endpoint.
 
 ## Viewing custom statistics
 
-The Worker includes a private dashboard at `/dashboard`. It shows active daily
+The Worker includes an aggregate dashboard at `/dashboard`. It shows active daily
 browsers, visits, successful and failed calculations, daily trends, languages,
 and counts for every tracked feature event. Every query contains `double1 = 0`,
 so requests made in analytics test mode and automated browser tests are excluded.
+The page is public, but it exposes only these fixed aggregate queries. It never
+returns visitor identifiers or accepts SQL from a request. Summary responses are
+cached for five minutes to protect the Analytics Engine query allowance.
 
-Protect the dashboard with Cloudflare Access before using it. Configure these
-Worker values separately for staging and production:
+Configure these Worker values separately for staging and production:
 
 | Setting | Type | Purpose |
 |---|---|---|
 | `ANALYTICS_ACCOUNT_ID` | secret | Account containing Analytics Engine |
-| `CF_ACCESS_TEAM_DOMAIN` | variable | For example `your-team.cloudflareaccess.com` |
-| `CF_ACCESS_AUD` | variable | Access application audience tag |
-| `ADMIN_EMAILS` | variable | Optional comma-separated dashboard email allowlist |
 | `ANALYTICS_READ_TOKEN` | secret | API token limited to Analytics Engine read access |
-
-Use a dedicated custom hostname such as `analytics.factor-tools.com`, add a
-self-hosted Access application for `analytics.factor-tools.com/dashboard*`, and
-allow only the owner's identity. The Worker validates the signed Access token
-again before it serves either the page or its data API.
