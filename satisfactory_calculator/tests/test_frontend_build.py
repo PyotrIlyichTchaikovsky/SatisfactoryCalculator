@@ -68,6 +68,13 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
             self.assertTrue(all(set(value) == {"ui", "game"} for value in assets.values()))
             self.assertTrue(all("i18n/" in value["game"] for value in assets.values()))
 
+    def test_release_manifest_lists_the_exact_localization_assets(self):
+        config={"sentryRelease":"a"*40,"sentryEnvironment":"staging","releaseVersion":"v2026.09.21.1.1",
+                "apiBaseUrl":"https://api.example","localizationAssets":{"en-US":{"ui":"i18n/ui.en-US.1234567890.json","game":"i18n/game.en-US.1234567890.json"}}}
+        with patch.dict(build_frontend.os.environ,{"RELEASE_ID":"1-1"},clear=True):
+            manifest=build_frontend.release_manifest(config)
+        self.assertEqual(manifest["localizationAssets"],config["localizationAssets"])
+
     def test_game_localization_manifest_has_full_recipe_and_device_coverage(self):
         manifest = json.loads((build_frontend.SOURCE_DIR / "i18n" / "game-data-manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["gameBuildId"], "24656030")

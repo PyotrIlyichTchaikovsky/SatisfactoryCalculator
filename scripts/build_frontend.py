@@ -33,6 +33,7 @@ def release_manifest(config: dict[str, object]) -> dict[str, object]:
             "apiBaseUrl": config["apiBaseUrl"], "applicationDigest": application_digest(),
             "dataVersion": hashlib.sha256((SOURCE_DIR / "data" / "Data.xlsx").read_bytes()).hexdigest()[:16],
             "localizationVersion": localization_digest(),
+            "localizationAssets": config.get("localizationAssets", {}),
             "configDigest": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()}
 
 

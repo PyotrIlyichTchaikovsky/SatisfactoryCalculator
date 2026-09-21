@@ -218,7 +218,8 @@ class Cloud:
 
     def publish_frontend(self, sha):
         run(["node", "node_modules/wrangler/bin/wrangler.js", "pages", "deploy", "dist/frontend",
-             "--project-name", self.c["CLOUDFLARE_PAGES_PROJECT"], "--branch", "main", "--commit-hash", sha, "--commit-dirty=true"])
+             "--project-name", self.c["CLOUDFLARE_PAGES_PROJECT"], "--branch", "main", "--commit-hash", sha,
+             "--commit-dirty=true", "--skip-caching"])
         deployment = self.cf().get("canonical_deployment")
         require(deployment and deployment.get("deployment_trigger", {}).get("metadata", {}).get("commit_hash") == sha, "Cloudflare did not activate the requested frontend")
         return deployment["id"]
@@ -251,7 +252,9 @@ class Cloud:
         require(actual["traffic"] == snapshot["traffic"] and actual["frontendDeployment"] == snapshot["frontendDeployment"], "Provider state does not match recovery target")
         expected = snapshot.get("manifest")
         if snapshot.get("frontendDeployment"):
-            check_live(self.c, expected, browser=True)
+            # A restored release may predate the current browser suite. Verify its
+            # provider state and manifest/API contract without applying newer UI tests.
+            check_live(self.c, expected, browser=False)
         elif snapshot.get("traffic"):
             check_api_until_ready(self.c["PLANNER_API_BASE_URL"], self.c.environment, legacy=True)
 
@@ -288,6 +291,21 @@ def check_api_until_ready(base_url, environment, sha=None, data_version=None, re
             time.sleep(delay)
 
 
+def verify_localization_assets(base_url, manifest):
+    assets = manifest.get("localizationAssets") or {}
+    require(assets, "Deployed frontend manifest has no localization assets")
+    for locale, kinds in sorted(assets.items()):
+        require(set(kinds) == {"ui", "game"}, f"Deployed frontend has incomplete localization assets for {locale}")
+        for kind, path in sorted(kinds.items()):
+            require(re.fullmatch(rf"i18n/{kind}\.{re.escape(locale)}\.[0-9a-f]{{10}}\.json", path or ""),
+                    f"Deployed frontend has an invalid localization asset path for {locale}/{kind}")
+            try:
+                payload = get_json(base_url + "/" + path)
+            except Exception as error:
+                raise ReleaseError(f"Deployed localization asset is missing or invalid JSON: /{path}") from error
+            require(isinstance(payload, dict), f"Deployed localization asset is not a JSON object: /{path}")
+
+
 def check_live(config, expected, browser=True):
     # Only retry transient API/metadata propagation; a browser regression fails immediately.
     for attempt in range(20):
@@ -299,6 +317,8 @@ def check_live(config, expected, browser=True):
                                   legacy=expected is None, attempts=1)
             if expected:
                 verify_manifest(get_json(config["PUBLIC_SITE_URL"] + "/release.json"), expected, config.environment)
+                if "localizationAssets" in expected:
+                    verify_localization_assets(config["PUBLIC_SITE_URL"], expected)
             break
         except Exception:
             if attempt == 19:

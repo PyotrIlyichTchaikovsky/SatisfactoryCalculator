@@ -120,6 +120,29 @@ class ReleaseTransactionTests(unittest.TestCase):
         traffic.assert_called_once_with({"old-revision":100})
         check.assert_called_once_with("https://api.example","production",legacy=True)
 
+    def test_restore_does_not_apply_new_browser_suite_to_an_old_release(self):
+        cloud=release.Cloud(self.config)
+        old_manifest=dict(self.candidate,environment="production",localizationAssets={"en-US":{"ui":"i18n/ui.en-US.1234567890.json","game":"i18n/game.en-US.1234567890.json"}})
+        snapshot={"traffic":{"old-revision":100},"frontendDeployment":"old-pages","manifest":old_manifest}
+        with patch.object(cloud,"cf",return_value={"canonical_deployment":{"id":"new-pages"}}) as cf, patch.object(cloud,"set_traffic") as traffic, patch.object(cloud,"snapshot",return_value=snapshot), patch.object(release,"check_live") as check:
+            cloud.restore(snapshot)
+        cf.assert_any_call("/deployments/old-pages/rollback","POST")
+        traffic.assert_called_once_with(snapshot["traffic"])
+        check.assert_called_once_with(self.config,old_manifest,browser=False)
+
+    def test_pages_deploy_reuploads_every_built_asset(self):
+        cloud=release.Cloud(self.config)
+        deployment={"id":"pages-id","deployment_trigger":{"metadata":{"commit_hash":"a"*40}}}
+        with patch.object(release,"run") as command, patch.object(cloud,"cf",return_value={"canonical_deployment":deployment}):
+            self.assertEqual(cloud.publish_frontend("a"*40),"pages-id")
+        self.assertIn("--skip-caching",command.call_args.args[0])
+
+    def test_localization_asset_check_reports_the_missing_path(self):
+        manifest={"localizationAssets":{"zh-CN":{"ui":"i18n/ui.zh-CN.1234567890.json","game":"i18n/game.zh-CN.1234567890.json"}}}
+        with patch.object(release,"get_json",side_effect=[{},json.JSONDecodeError("bad","",0)]):
+            with self.assertRaisesRegex(release.ReleaseError,"/i18n/ui.zh-CN.1234567890.json"):
+                release.verify_localization_assets("https://stage.example",manifest)
+
     def test_failed_deploy_records_safe_failure_phase(self):
         cloud=self.cloud(); cloud.stage_backend.side_effect=release.ReleaseError("provider failed")
         with self.assertRaisesRegex(release.ReleaseError,"deploy_backend_candidate"):
