@@ -28,5 +28,11 @@
   "picker.raw": "Rohstoffe",
   "picker.collectibles": "Sammelobjekte",
   "picker.power": "Energie",
+  "loading.title": "Produktionsplaner wird geladen…",
+  "loading.preparing": "Material- und Rezeptdaten werden vorbereitet. Der erste Aufruf kann einige Sekunden dauern.",
+  "loading.recipes": "Materialien sind bereit. Der Rezeptkatalog wird geladen…",
+  "loading.failedTitle": "Der Planer konnte nicht geladen werden",
+  "loading.failed": "Überprüfe deine Verbindung und versuche es erneut.",
+  "loading.retry": "Erneut versuchen",
   "privacy.link": "Datenschutz"
 }

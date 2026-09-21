@@ -12,6 +12,10 @@
   const plannerForm = document.getElementById("plannerForm");
   const calculateButton = document.getElementById("calculateButton");
   const dataSummary = document.getElementById("dataSummary");
+  const initialLoading = document.getElementById("initialLoading");
+  const initialLoadingTitle = document.getElementById("initialLoadingTitle");
+  const initialLoadingMessage = document.getElementById("initialLoadingMessage");
+  const initialLoadingRetry = document.getElementById("initialLoadingRetry");
   const statusMessage = document.getElementById("statusMessage");
   const treeView = document.getElementById("treeView");
   const tableView = document.getElementById("tableView");
@@ -71,6 +75,7 @@
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
+  initialLoadingRetry?.addEventListener("click", () => window.location.reload());
   document.addEventListener("click", (event) => {
     if (!(event.target instanceof Element) || !event.target.closest(".plan-picker")) {
       closeTargetPlanPickers();
@@ -112,6 +117,7 @@
       }
       renderTargetPlanSelectors();
       dataSummary.textContent = t("status.itemsLoading", { count: formatInteger(items.length) });
+      setInitialLoadingMessage("loading.recipes");
       setStatus(t("status.itemsReady"), false);
 
       const [summary, recipePayload] = await supportingData;
@@ -122,6 +128,7 @@
       activatePlanCacheForCurrentTargets();
       dataSummary.textContent = summaryText(summary);
       setStatus(t("status.loaded"), false);
+      finishInitialLoading();
       analytics.track("planner_ready", {
         durationMs: performance.now() - plannerLoadStartedAt,
         recipeCount: summary?.recipeCount,
@@ -134,11 +141,35 @@
       renderTargetPlanSelectors();
       dataSummary.textContent = t("status.connectionFailed");
       setStatus(`Unable to load data: ${error.message} Please retry.`, true);
+      showInitialLoadingError();
       analytics.track("planner_load_failed", {
         durationMs: performance.now() - plannerLoadStartedAt,
         reason: error?.name || "error",
       });
     }
+  }
+
+  function setInitialLoadingMessage(key) {
+    if (initialLoadingMessage) initialLoadingMessage.textContent = t(key);
+  }
+
+  function finishInitialLoading() {
+    if (!initialLoading) return;
+    initialLoading.setAttribute("aria-busy", "false");
+    initialLoading.classList.add("complete");
+    document.body.classList.remove("is-loading");
+    window.setTimeout(() => {
+      initialLoading.hidden = true;
+    }, 180);
+  }
+
+  function showInitialLoadingError() {
+    if (!initialLoading) return;
+    initialLoading.classList.add("error");
+    initialLoading.setAttribute("aria-busy", "false");
+    if (initialLoadingTitle) initialLoadingTitle.textContent = t("loading.failedTitle");
+    setInitialLoadingMessage("loading.failed");
+    if (initialLoadingRetry) initialLoadingRetry.hidden = false;
   }
 
   async function calculate(options = {}) {

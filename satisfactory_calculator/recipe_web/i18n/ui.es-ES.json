@@ -28,5 +28,11 @@
   "picker.raw": "Recursos en bruto",
   "picker.collectibles": "Coleccionables",
   "picker.power": "Energía",
+  "loading.title": "Cargando el planificador de producción…",
+  "loading.preparing": "Preparando los datos de materiales y recetas. La primera visita puede tardar unos segundos.",
+  "loading.recipes": "Los materiales están listos. Cargando el catálogo de recetas…",
+  "loading.failedTitle": "No se pudo cargar el planificador",
+  "loading.failed": "Comprueba tu conexión e inténtalo de nuevo.",
+  "loading.retry": "Reintentar",
   "privacy.link": "Privacidad"
 }

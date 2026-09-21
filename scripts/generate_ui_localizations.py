@@ -29,6 +29,31 @@ COMMON = {
     "uk-UA": ["Мова", "Авто", "Цілі виробництва", "Збережені плани", "Недавня історія", "Додати предмет", "Зберегти", "Розрахувати", "Предмет", "Вибрати предмет", "Кількість за хвилину", "Фільтр рецептів", "Вибрати матеріал", "Очистити матеріал", "Скинути все", "Готово", "Закрити", "Результати", "Схема", "Зведена таблиця", "Скинути розташування", "Повідомити про проблему", "Пошук за назвою", "Нещодавно вибрані", "Усі матеріали", "Цільові матеріали етапів", "Вироблені предмети", "Сировина", "Колекційні предмети", "Енергія"],
 }
 
+LOADING_COPY = {
+    "fr-FR": ["Chargement du planificateur de production…", "Préparation des données des matériaux et des recettes. La première ouverture peut prendre quelques secondes.", "Les matériaux sont prêts. Chargement du catalogue de recettes…", "Impossible de charger le planificateur", "Vérifiez votre connexion, puis réessayez.", "Réessayer"],
+    "it-IT": ["Caricamento del pianificatore di produzione…", "Preparazione dei dati di materiali e ricette. Il primo avvio può richiedere alcuni secondi.", "I materiali sono pronti. Caricamento del catalogo delle ricette…", "Impossibile caricare il pianificatore", "Controlla la connessione e riprova.", "Riprova"],
+    "de-DE": ["Produktionsplaner wird geladen…", "Material- und Rezeptdaten werden vorbereitet. Der erste Aufruf kann einige Sekunden dauern.", "Materialien sind bereit. Der Rezeptkatalog wird geladen…", "Der Planer konnte nicht geladen werden", "Überprüfe deine Verbindung und versuche es erneut.", "Erneut versuchen"],
+    "es-ES": ["Cargando el planificador de producción…", "Preparando los datos de materiales y recetas. La primera visita puede tardar unos segundos.", "Los materiales están listos. Cargando el catálogo de recetas…", "No se pudo cargar el planificador", "Comprueba tu conexión e inténtalo de nuevo.", "Reintentar"],
+    "ja-JP": ["生産プランナーを読み込んでいます…", "素材とレシピのデータを準備しています。初回は数秒かかる場合があります。", "素材の準備が完了しました。レシピ一覧を読み込んでいます…", "プランナーを読み込めませんでした", "接続を確認して、もう一度お試しください。", "再読み込み"],
+    "ko-KR": ["생산 플래너를 불러오는 중…", "재료와 제작법 데이터를 준비하고 있습니다. 처음 열 때는 몇 초 정도 걸릴 수 있습니다.", "재료 준비가 완료되었습니다. 제작법 목록을 불러오는 중…", "플래너를 불러올 수 없습니다", "연결을 확인한 후 다시 시도하세요.", "다시 시도"],
+    "pl-PL": ["Wczytywanie planera produkcji…", "Przygotowywanie danych materiałów i receptur. Pierwsze uruchomienie może potrwać kilka sekund.", "Materiały są gotowe. Wczytywanie katalogu receptur…", "Nie udało się wczytać planera", "Sprawdź połączenie i spróbuj ponownie.", "Spróbuj ponownie"],
+    "pt-BR": ["Carregando o planejador de produção…", "Preparando os dados de materiais e receitas. O primeiro acesso pode levar alguns segundos.", "Os materiais estão prontos. Carregando o catálogo de receitas…", "Não foi possível carregar o planejador", "Verifique sua conexão e tente novamente.", "Tentar novamente"],
+    "ru-RU": ["Загрузка планировщика производства…", "Подготавливаются данные материалов и рецептов. Первый запуск может занять несколько секунд.", "Материалы готовы. Загружается каталог рецептов…", "Не удалось загрузить планировщик", "Проверьте подключение и повторите попытку.", "Повторить"],
+    "zh-CN": ["正在加载生产规划工具……", "正在准备材料和配方数据，首次打开可能需要几秒钟。", "材料已准备完成，正在加载配方目录……", "生产规划工具加载失败", "请检查网络连接，然后重试。", "重新加载"],
+    "zh-TW": ["正在載入生產規劃工具……", "正在準備材料和配方資料，首次開啟可能需要幾秒鐘。", "材料已準備完成，正在載入配方目錄……", "生產規劃工具載入失敗", "請檢查網路連線，然後重試。", "重新載入"],
+    "uk-UA": ["Завантаження планувальника виробництва…", "Підготовка даних матеріалів і рецептів. Перший запуск може тривати кілька секунд.", "Матеріали готові. Завантаження каталогу рецептів…", "Не вдалося завантажити планувальник", "Перевірте з’єднання та спробуйте ще раз.", "Спробувати ще раз"],
+}
+
+LOADING_KEYS = [
+    "loading.title", "loading.preparing", "loading.recipes", "loading.failedTitle", "loading.failed", "loading.retry",
+]
+
+PRIVACY_COPY = {
+    "fr-FR": "Confidentialité", "it-IT": "Privacy", "de-DE": "Datenschutz", "es-ES": "Privacidad",
+    "ja-JP": "プライバシー", "ko-KR": "개인정보 보호", "pl-PL": "Prywatność", "pt-BR": "Privacidade",
+    "ru-RU": "Конфиденциальность", "zh-CN": "隐私", "zh-TW": "隱私", "uk-UA": "Конфіденційність",
+}
+
 KEYS = [
     "language.label", "language.auto", "targets.title", "targets.saved", "targets.history", "targets.add",
     "targets.save", "targets.calculate", "targets.item", "targets.chooseItem", "targets.rate", "recipes.filter",
@@ -90,7 +115,9 @@ def main() -> None:
     english = json.loads((I18N / "ui.en-US.json").read_text(encoding="utf-8"))
     for locale, values in COMMON.items():
         data = {key: value for key, value in zip(KEYS, values, strict=True)}
+        data.update({key: value for key, value in zip(LOADING_KEYS, LOADING_COPY[locale], strict=True)})
         data.update(ZH_EXTRA.get(locale, {}))
+        data["privacy.link"] = PRIVACY_COPY[locale]
         data = {key: value for key, value in data.items() if not key.startswith("diagnostics.")}
         (I18N / f"ui.{locale}.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

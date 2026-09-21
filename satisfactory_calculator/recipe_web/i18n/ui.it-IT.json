@@ -28,5 +28,11 @@
   "picker.raw": "Risorse grezze",
   "picker.collectibles": "Collezionabili",
   "picker.power": "Energia",
+  "loading.title": "Caricamento del pianificatore di produzione…",
+  "loading.preparing": "Preparazione dei dati di materiali e ricette. Il primo avvio può richiedere alcuni secondi.",
+  "loading.recipes": "I materiali sono pronti. Caricamento del catalogo delle ricette…",
+  "loading.failedTitle": "Impossibile caricare il pianificatore",
+  "loading.failed": "Controlla la connessione e riprova.",
+  "loading.retry": "Riprova",
   "privacy.link": "Privacy"
 }

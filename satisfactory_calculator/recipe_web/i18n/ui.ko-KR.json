@@ -28,5 +28,11 @@
   "picker.raw": "원재료",
   "picker.collectibles": "수집품",
   "picker.power": "전력",
+  "loading.title": "생산 플래너를 불러오는 중…",
+  "loading.preparing": "재료와 제작법 데이터를 준비하고 있습니다. 처음 열 때는 몇 초 정도 걸릴 수 있습니다.",
+  "loading.recipes": "재료 준비가 완료되었습니다. 제작법 목록을 불러오는 중…",
+  "loading.failedTitle": "플래너를 불러올 수 없습니다",
+  "loading.failed": "연결을 확인한 후 다시 시도하세요.",
+  "loading.retry": "다시 시도",
   "privacy.link": "개인정보 보호"
 }

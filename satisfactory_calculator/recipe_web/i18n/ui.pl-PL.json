@@ -28,5 +28,11 @@
   "picker.raw": "Surowce",
   "picker.collectibles": "Przedmioty do zebrania",
   "picker.power": "Energia",
+  "loading.title": "Wczytywanie planera produkcji…",
+  "loading.preparing": "Przygotowywanie danych materiałów i receptur. Pierwsze uruchomienie może potrwać kilka sekund.",
+  "loading.recipes": "Materiały są gotowe. Wczytywanie katalogu receptur…",
+  "loading.failedTitle": "Nie udało się wczytać planera",
+  "loading.failed": "Sprawdź połączenie i spróbuj ponownie.",
+  "loading.retry": "Spróbuj ponownie",
   "privacy.link": "Prywatność"
 }

@@ -28,5 +28,11 @@
   "picker.raw": "原材料",
   "picker.collectibles": "収集品",
   "picker.power": "電力",
+  "loading.title": "生産プランナーを読み込んでいます…",
+  "loading.preparing": "素材とレシピのデータを準備しています。初回は数秒かかる場合があります。",
+  "loading.recipes": "素材の準備が完了しました。レシピ一覧を読み込んでいます…",
+  "loading.failedTitle": "プランナーを読み込めませんでした",
+  "loading.failed": "接続を確認して、もう一度お試しください。",
+  "loading.retry": "再読み込み",
   "privacy.link": "プライバシー"
 }
