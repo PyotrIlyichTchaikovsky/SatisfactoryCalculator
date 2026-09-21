@@ -65,9 +65,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          deploy_output="$(NO_COLOR=1 pnpm exec wrangler deploy --config analytics_worker/wrangler.jsonc --env staging 2>&1)"
-          printf '%s\n' "$deploy_output"
-          worker_origin="$(printf '%s\n' "$deploy_output" | grep -Eo 'https://[[:alnum:].-]+\.workers\.dev' | tail -n 1 || true)"
+          deploy_log="$RUNNER_TEMP/wrangler-deploy-staging.log"
+          NO_COLOR=1 pnpm exec wrangler deploy --config analytics_worker/wrangler.jsonc --env staging 2>&1 | tee "$deploy_log"
+          worker_origin="$(grep -Eo 'https://[[:alnum:].-]+\.workers\.dev' "$deploy_log" | tail -n 1 || true)"
           if [[ -z "$worker_origin" ]]; then
             echo "Wrangler did not report the deployed analytics Worker URL." >&2
             exit 1
@@ -168,9 +168,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          deploy_output="$(NO_COLOR=1 pnpm exec wrangler deploy --config analytics_worker/wrangler.jsonc --env production 2>&1)"
-          printf '%s\n' "$deploy_output"
-          worker_origin="$(printf '%s\n' "$deploy_output" | grep -Eo 'https://[[:alnum:].-]+\.workers\.dev' | tail -n 1 || true)"
+          deploy_log="$RUNNER_TEMP/wrangler-deploy-production.log"
+          NO_COLOR=1 pnpm exec wrangler deploy --config analytics_worker/wrangler.jsonc --env production 2>&1 | tee "$deploy_log"
+          worker_origin="$(grep -Eo 'https://[[:alnum:].-]+\.workers\.dev' "$deploy_log" | tail -n 1 || true)"
           if [[ -z "$worker_origin" ]]; then
             echo "Wrangler did not report the deployed analytics Worker URL." >&2
             exit 1
