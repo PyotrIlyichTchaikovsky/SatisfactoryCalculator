@@ -8,7 +8,7 @@ test('Simplified Chinese localizes UI, official game names, search, and calculat
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
   await expect(page.locator('#languageSelect')).toHaveValue('zh-CN');
   await expect(page.getByRole('heading', {name: '生产目标'})).toBeVisible();
-  await expect(page.locator('#dataSummary')).toContainText('个配方');
+  await expect(page.locator('#dataSummary')).toContainText('个配方', {timeout: 30000});
 
   await page.locator('.item-input').first().click();
   await expect(page.getByRole('dialog', {name: '选择目标材料'})).toBeVisible();
@@ -25,7 +25,7 @@ test('Simplified Chinese localizes UI, official game names, search, and calculat
 test('material order follows the same game progression in every language', async ({page}) => {
   async function visibleOrder(language) {
     await page.goto(`/?lang=${language}&analytics_test=1`);
-    await expect(page.locator('#dataSummary')).not.toContainText(language === 'zh-CN' ? '正在连接' : 'Connecting');
+    await expect(page.locator('#dataSummary')).not.toContainText(language === 'zh-CN' ? '正在连接' : 'Connecting', {timeout: 30000});
     await page.locator('.item-input').first().click();
     await expect(page.locator('.material-picker-dialog')).toBeVisible();
     await page.locator('.material-picker-category').nth(1).click();

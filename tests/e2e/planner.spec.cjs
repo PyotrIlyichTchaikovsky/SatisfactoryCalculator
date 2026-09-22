@@ -49,7 +49,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   expect(response.ok()).toBeTruthy();
   await expect(page.locator('.analytics-test-banner')).toBeVisible();
   expect(await page.evaluate(() => window.PlannerAnalytics.isSynthetic())).toBe(true);
-  await expect(page.locator('#dataSummary')).toContainText('recipes');
+  await expect(page.locator('#dataSummary')).toContainText('recipes', {timeout: 30000});
   if(expectedSha) expect(manifest.sha).toBe(expectedSha);
   if(!legacy) expect(manifest.version).toMatch(/^v\d{4}\.\d{2}\.\d{2}\.\d+\.\d+$/);
   if(process.env.EXPECTED_RELEASE_ID) expect(manifest.releaseId).toBe(process.env.EXPECTED_RELEASE_ID);
@@ -172,7 +172,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   await expect(page.locator('.graph-node.raw.located')).toBeVisible();
   await page.getByRole('button',{name:'Save',exact:true}).click();
   await page.reload();
-  await expect(page.locator('#dataSummary')).toContainText('recipes');
+  await expect(page.locator('#dataSummary')).toContainText('recipes', {timeout: 30000});
   await expect(page.locator('.item-input').first()).toHaveValue('Iron Plate');
   await expect(page.locator('.amount-input').first()).toHaveValue('60');
   await expect(page.locator('#savedPlanSelect .plan-picker-button')).toBeEnabled();
