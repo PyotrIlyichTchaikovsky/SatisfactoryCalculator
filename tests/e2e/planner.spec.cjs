@@ -126,6 +126,20 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   expect(switchedResult.recipeRuns.filter(run=>run.outputs.some(output=>output.item.className==='Desc_IronPlate_C')).map(run=>run.id)).toEqual(['Recipe_Alternate_SteelCastedPlate_C']);
   expect(switchedResult.rawTotals.reduce((sum,row)=>sum+Number(row.rate||0),0)).toBeLessThan(1000);
   await expect(page.locator('#statusMessage')).toContainText('Optimized');
+  await expect(page.locator('.graph-node.recipe.alternate .graph-node-kind .alternate-recipe-tag')).toContainText('ALT');
+  await expect(page.locator('.graph-node.recipe.alternate .graph-node-kind')).toContainText('Recipe');
+  await page.getByRole('button',{name:'Find Recipe',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Find Recipe'})).toBeVisible();
+  expect(await page.locator('.recipe-finder-row').count()).toBeGreaterThan(0);
+  await expect(page.locator('.recipe-finder-row').first().locator('.recipe-finder-output-icon')).toBeVisible();
+  await expect(page.locator('.recipe-finder-row').first().locator('.recipe-finder-formula')).toContainText('=');
+  await page.getByRole('button',{name:'Choose Material',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Choose Material in Current Plan'})).toBeVisible();
+  await page.getByRole('option',{name:'Select Iron Plate',exact:true}).click();
+  await expect(page.locator('.recipe-finder-row')).toHaveCount(1);
+  await page.locator('.recipe-finder-row').click();
+  await expect(page.locator('.recipe-finder-overlay')).toHaveCount(0);
+  await expect(page.locator('.graph-node.recipe.alternate.located')).toBeVisible();
   await page.getByRole('button',{name:/^Recipe Filter/}).click();
   const groupStates=await page.locator('.recipe-material-group').evaluateAll(groups=>groups.map(group=>({
     modified:group.classList.contains('modified'),
@@ -145,6 +159,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   await page.getByRole('tab',{name:'Merged Table'}).click();
   await expect(page.locator('#tableView')).toBeVisible();
   await expect(page.locator('#tableView')).toContainText('Iron Plate');
+  await expect(page.locator('#tableView .alternate-recipe-tag')).toContainText('ALT');
   await page.locator('.table-switch-recipe-button').first().click();
   await expect(page.getByRole('dialog',{name:'Recipe Filter'})).toBeVisible();
   await expect(page.locator('.recipe-material-group')).toHaveCount(1);

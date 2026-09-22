@@ -1093,6 +1093,15 @@ body.material-picker-open {
   box-shadow: 0 20px 38px rgba(0, 0, 0, 0.42), 0 0 0 4px rgba(255, 255, 255, 0.72), 0 0 28px rgba(250, 204, 21, 0.62);
 }
 
+.graph-node.located {
+  animation: graph-node-located 1.8s ease-out 1;
+}
+
+@keyframes graph-node-located {
+  0%, 35% { outline: 5px solid #facc15; outline-offset: 7px; box-shadow: 0 0 0 9px rgba(250, 204, 21, 0.35); }
+  100% { outline: 5px solid rgba(250, 204, 21, 0); outline-offset: 7px; box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+}
+
 .graph-node.has-switch-button .graph-node-kind {
   padding-right: 28px;
 }
@@ -1251,6 +1260,62 @@ body.material-picker-open {
 
 .recipe-filter-dialog.dragging {
   box-shadow: 0 28px 78px rgba(15, 23, 42, 0.34);
+}
+
+.recipe-finder-dialog {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(720px, calc(100vw - 36px));
+}
+
+.recipe-finder-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recipe-finder-row + .recipe-finder-row {
+  margin-top: 8px;
+}
+
+.recipe-finder-row:hover,
+.recipe-finder-row:focus-visible {
+  border-color: #14b8a6;
+  background: #f4fbfa;
+  outline: none;
+}
+
+.recipe-finder-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.recipe-finder-output-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  background-color: #edf2f7;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.recipe-finder-formula {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .recipe-filter-drag-handle {
@@ -1525,6 +1590,35 @@ body.material-picker-open {
   letter-spacing: 0.08em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.graph-node-kind.alternate-recipe-kind {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.alternate-recipe-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #5b21b6;
+  color: #f5f3ff;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.recipe-usage-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
 }
 
 .graph-node-title {

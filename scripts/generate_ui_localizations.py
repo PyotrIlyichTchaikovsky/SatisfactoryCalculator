@@ -76,6 +76,10 @@ ZH_EXTRA = {
         "recipes.hint": "同一配方可能出现在多个材料下；勾选任意一处会同步更新所有位置。",
         "results.initial": "请选择一个或多个材料，并输入每分钟所需产量。", "results.views": "结果视图", "results.recipes": "配方",
         "results.noPlan": "当前条件下无法显示生产方案。", "results.noTable": "当前条件下无法显示汇总表。",
+        "results.findRecipe": "查找配方", "results.locateChanged": "定位改动", "results.findRecipeSearch": "搜索配方或产出材料",
+        "results.findRecipeChooseMaterial": "选择材料", "results.findRecipeMaterial": "选择当前方案中的材料",
+        "results.findRecipeMaterialHelp": "选择产出材料，只显示当前方案中对应的配方。", "results.findRecipeCount": "匹配 {count} 个配方",
+        "results.findRecipeNone": "当前方案中没有匹配的配方。",
         "results.noTarget": "尚未计算生产目标。", "results.noDownstream": "所选目标没有下游材料需求。",
         "results.targetOutputs": "目标产出", "results.supplyLayer": "供应层 {index}", "results.sharedSupply": "共享／循环供应",
         "results.externalInput": "外部输入", "results.drag": "拖动", "diagnostics.details": "技术信息和方案输入",
@@ -94,18 +98,21 @@ ZH_EXTRA = {
         "status.invalidRate": "请输入{name}的正数每分钟产量。", "status.unmatched": "无法匹配材料：{name}",
         "status.scaled": "已将当前结果缩放 {factor} 倍，无需再次请求服务器。", "summary.loaded": "{recipes} 个配方 · {items} 个材料 · {raw} 种原始资源",
         "category.NormalMaterial": "制造材料", "category.RawMaterial": "原始资源", "category.PickupMaterial": "采集物", "category.Power": "电力",
-        "kind.output": "产出", "kind.surplus": "余量", "kind.recipe": "配方", "kind.intermediate": "中间材料",
+        "kind.output": "产出", "kind.surplus": "余量", "kind.recipe": "配方", "kind.alternateRecipe": "替代配方", "kind.intermediate": "中间材料",
         "table.item": "材料", "table.required": "需求量／分钟", "table.unit": "单位", "table.type": "类型", "table.recipes": "使用的配方"
     },
     "zh-TW": {
         "app.title": "Satisfactory 生產規劃工具", "app.description": "規劃 Satisfactory 的生產目標、配方、原始資源與工廠流程。",
         "app.connecting": "正在連線生產規劃服務……", "targets.chooseTarget": "選擇目標材料", "targets.chooseTargetHelp": "選擇工廠需要生產的材料。",
         "recipes.baseTag": "[基礎配方]", "recipes.recipeTag": "[配方]", "results.initial": "請選擇一個或多個材料，並輸入每分鐘所需產量。",
-        "recipes.directRawName": "直接使用{name}",
+        "recipes.directRawName": "直接使用{name}", "results.findRecipe": "尋找配方", "results.locateChanged": "定位變更",
+        "results.findRecipeSearch": "搜尋配方或產出材料", "results.findRecipeChooseMaterial": "選擇材料",
+        "results.findRecipeMaterial": "選擇目前方案中的材料", "results.findRecipeMaterialHelp": "選擇產出材料，只顯示目前方案中對應的配方。",
+        "results.findRecipeCount": "符合 {count} 個配方", "results.findRecipeNone": "目前方案中沒有符合的配方。",
         "picker.title": "選擇材料", "picker.help": "先選擇分類，再選擇材料。", "picker.empty": "沒有符合搜尋條件的材料。",
         "picker.select": "選擇{name}", "picker.count.one": "{count} 個材料", "picker.count.other": "{count} 個材料",
         "category.NormalMaterial": "製造材料", "category.RawMaterial": "原始資源", "category.PickupMaterial": "收集物", "category.Power": "電力",
-        "kind.output": "產出", "kind.surplus": "餘量", "kind.recipe": "配方", "kind.intermediate": "中間材料",
+        "kind.output": "產出", "kind.surplus": "餘量", "kind.recipe": "配方", "kind.alternateRecipe": "替代配方", "kind.intermediate": "中間材料",
         "table.item": "材料", "table.required": "需求量／分鐘", "table.unit": "單位", "table.type": "類型", "table.recipes": "使用的配方"
     }
 }

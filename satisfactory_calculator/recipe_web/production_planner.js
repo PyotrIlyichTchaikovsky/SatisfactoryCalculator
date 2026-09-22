@@ -20,6 +20,8 @@
   const treeView = document.getElementById("treeView");
   const tableView = document.getElementById("tableView");
   const resetLayoutButton = document.getElementById("resetLayoutButton");
+  const findRecipeButton = document.getElementById("findRecipeButton");
+  const locateChangedRecipesButton = document.getElementById("locateChangedRecipesButton");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
   const SELECTION_CACHE_VERSION = 6;
@@ -59,6 +61,9 @@
   let lastServerResult = null;
   let lastServerTargets = [];
   let lastServerPlanSignature = "";
+  let lastRenderedGraph = null;
+  let recipeFilterInitialSelection = null;
+  let changedRecipeIdsToLocate = [];
   const plannerLoadStartedAt = performance.now();
   const analytics = window.PlannerAnalytics || { track: () => false };
 
@@ -75,6 +80,8 @@
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
+  findRecipeButton?.addEventListener("click", () => openFindRecipeDialog());
+  locateChangedRecipesButton?.addEventListener("click", () => openFindRecipeDialog({ recipeIds: changedRecipeIdsToLocate }));
   initialLoadingRetry?.addEventListener("click", () => window.location.reload());
   document.addEventListener("click", (event) => {
     if (!(event.target instanceof Element) || !event.target.closest(".plan-picker")) {
@@ -221,6 +228,7 @@
       lastServerTargets = targetSnapshotsFromTargets(targets);
       lastServerPlanSignature = planSignature();
       renderPlannerResult(result, { selectTree: true });
+      handlePostCalculationRecipeLocation(options.locateRecipeIds);
       updateRecipeFilterButton();
       const targetCount = result.summary?.targetCount ?? targets.length;
       const totalRows = result.summary?.totalRows ?? 0;
@@ -1226,6 +1234,7 @@
 
   function renderGraphView(result, options = {}) {
     const graph = buildFlowGraph(result);
+    lastRenderedGraph = graph;
     if (!graph.nodes.length) {
       treeView.replaceChildren(makeEmptyMessage(t("results.noTarget")));
       return;
@@ -1322,6 +1331,7 @@
         title: run.recipe.name,
         meta: `x ${formatMultiplier(run.scale)}`,
         alternate: Boolean(run.recipe.isAlternate),
+        nonBaseRecipe: !isDefaultRecipeId(run.recipe.id),
         recipe: {
           ...run.recipe,
           currentScale: Number(run.scale || 0),
@@ -2202,6 +2212,37 @@
     return viewport;
   }
 
+  function handlePostCalculationRecipeLocation(recipeIds) {
+    const ids = normalizedRecipeIdList(recipeIds);
+    const presentIds = ids.filter((id) => lastRenderedGraph?.nodeById?.has(id));
+    changedRecipeIdsToLocate = presentIds;
+    if (locateChangedRecipesButton) {
+      locateChangedRecipesButton.hidden = presentIds.length < 2;
+    }
+    if (presentIds.length === 1) {
+      locateGraphNode(presentIds[0]);
+    }
+  }
+
+  function locateGraphNode(nodeId) {
+    const graph = lastRenderedGraph;
+    const node = graph?.nodeById?.get(nodeId);
+    const viewport = treeView.querySelector(".graph-viewport");
+    if (!graph || !node || !(viewport instanceof HTMLElement)) return false;
+    selectTab("tree");
+    selectedGraphHighlightDepth = 1;
+    applyGraphSelection(graph, nodeId);
+    viewport.scrollTo({
+      left: Math.max(0, node.x + node.width / 2 - viewport.clientWidth / 2),
+      top: Math.max(0, node.y + node.height / 2 - viewport.clientHeight / 2),
+      behavior: "smooth",
+    });
+    node.element?.classList.remove("located");
+    window.requestAnimationFrame(() => node.element?.classList.add("located"));
+    window.setTimeout(() => node.element?.classList.remove("located"), 1800);
+    return true;
+  }
+
   function renderGraphNode(node, graph) {
     const switchRecipe = graphNodeSwitchRecipe(node);
     const hasRecipeFilterShortcut = node.type === "recipe";
@@ -2312,6 +2353,16 @@
     const kind = document.createElement("div");
     kind.className = "graph-node-kind";
     kind.textContent = graphNodeKindText(node);
+    if (node.type === "recipe" && node.nonBaseRecipe) {
+      kind.classList.add("alternate-recipe-kind");
+      kind.textContent = "";
+      const alternateTag = document.createElement("span");
+      alternateTag.className = "alternate-recipe-tag";
+      alternateTag.textContent = "ALT";
+      alternateTag.title = t("kind.alternateRecipe");
+      alternateTag.setAttribute("aria-label", t("kind.alternateRecipe"));
+      kind.append(alternateTag, document.createTextNode(graphNodeKindText(node)));
+    }
     if (node.type === "recipe") {
       kind.title = "Drag recipe node from here";
       bindGraphDragStart(kind, node, graph);
@@ -2546,6 +2597,7 @@
       itemClass: options.materialClass || "",
     });
     closeRecipeFilterDialog();
+    recipeFilterInitialSelection = new Set(selectedRecipeIds);
     let activeFocusTarget = normalizeRecipeFilterFocus(options.focusTarget);
     const activeRecipeIdFilter = normalizeRecipeIdSet(options.filterRecipeIds || options.requiredRecipeIds);
     const hasRecipeIdFilter = activeRecipeIdFilter.size > 0;
@@ -2728,10 +2780,163 @@
     }
     const shouldRefreshDisplayedPlan = Boolean(lastServerResult)
       && planSignature() !== lastServerPlanSignature;
+    const changedRecipeIds = recipeFilterInitialSelection
+      ? symmetricRecipeSelectionDifference(recipeFilterInitialSelection, selectedRecipeIds)
+      : [];
+    recipeFilterInitialSelection = null;
     overlay.remove();
     if (shouldRefreshDisplayedPlan) {
-      calculate();
+      calculate({ locateRecipeIds: changedRecipeIds });
     }
+  }
+
+  function symmetricRecipeSelectionDifference(before, after) {
+    const changed = [];
+    before.forEach((id) => {
+      if (!after.has(id)) changed.push(id);
+    });
+    after.forEach((id) => {
+      if (!before.has(id)) changed.push(id);
+    });
+    return normalizedRecipeIdList(changed);
+  }
+
+  function openFindRecipeDialog(options = {}) {
+    const graph = lastRenderedGraph;
+    const recipeNodes = (graph?.nodes || []).filter((node) => node.type === "recipe");
+    if (!recipeNodes.length) {
+      setStatus(t("results.noTarget"), false);
+      return;
+    }
+    analytics.track("recipe_finder_opened", { resultRecipeCount: recipeNodes.length });
+    document.querySelector(".recipe-finder-overlay")?.remove();
+    const requestedRecipeIds = normalizeRecipeIdSet(options.recipeIds);
+    let activeMaterialClass = "";
+
+    const overlay = document.createElement("div");
+    overlay.className = "recipe-filter-overlay recipe-finder-overlay";
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.remove();
+    });
+    const dialog = document.createElement("section");
+    dialog.className = "recipe-filter-dialog recipe-finder-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-label", t("results.findRecipe"));
+
+    const header = document.createElement("div");
+    header.className = "recipe-filter-header";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "recipe-filter-title";
+    const title = document.createElement("h3");
+    title.textContent = t("results.findRecipe");
+    const summary = document.createElement("div");
+    summary.className = "recipe-filter-summary";
+    titleWrap.append(title, summary);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "secondary-button";
+    close.textContent = t("recipes.close");
+    close.addEventListener("click", () => overlay.remove());
+    header.append(titleWrap, close);
+
+    const tools = document.createElement("div");
+    tools.className = "recipe-filter-tools";
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "recipe-filter-search";
+    search.placeholder = t("results.findRecipeSearch");
+    const materialButton = document.createElement("button");
+    materialButton.type = "button";
+    materialButton.className = "secondary-button recipe-material-picker-button";
+    const clearMaterialButton = document.createElement("button");
+    clearMaterialButton.type = "button";
+    clearMaterialButton.className = "secondary-button";
+    clearMaterialButton.textContent = t("recipes.clearMaterial");
+    tools.append(search, materialButton, clearMaterialButton);
+
+    const list = document.createElement("div");
+    list.className = "recipe-filter-list recipe-finder-list";
+    dialog.append(header, tools, list);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const availableMaterialClasses = new Set(recipeNodes.flatMap((node) => (
+      (node.recipe?.currentOutputs || []).map((output) => output.item?.className).filter(Boolean)
+    )));
+    materialButton.addEventListener("click", async () => {
+      const selection = await window.MaterialPicker.open({
+        items,
+        filter: (item) => availableMaterialClasses.has(item.className),
+        title: t("results.findRecipeMaterial"),
+        description: t("results.findRecipeMaterialHelp"),
+        initialId: activeMaterialClass,
+        analyticsContext: "recipe_finder",
+      });
+      if (!selection) return;
+      activeMaterialClass = selection.id;
+      search.value = "";
+      renderList();
+    });
+    clearMaterialButton.addEventListener("click", () => {
+      activeMaterialClass = "";
+      renderList();
+    });
+    search.addEventListener("input", renderList);
+
+    function renderList() {
+      const query = normalize(search.value);
+      const matches = recipeNodes.filter((node) => {
+        if (requestedRecipeIds.size && !requestedRecipeIds.has(node.id)) return false;
+        const outputs = node.recipe?.currentOutputs || [];
+        if (activeMaterialClass && !outputs.some((output) => output.item?.className === activeMaterialClass)) return false;
+        return !query || normalize(`${node.title} ${outputs.map((output) => output.item?.name || "").join(" ")}`).includes(query);
+      });
+      const selectedItem = itemsByClass.get(activeMaterialClass);
+      materialButton.textContent = selectedItem ? t("recipes.material", { name: selectedItem.name }) : t("results.findRecipeChooseMaterial");
+      clearMaterialButton.hidden = !selectedItem;
+      summary.textContent = t("results.findRecipeCount", { count: formatInteger(matches.length) });
+      list.replaceChildren();
+      if (!matches.length) {
+        list.appendChild(makeEmptyMessage(t("results.findRecipeNone")));
+        return;
+      }
+      matches.sort((left, right) => left.title.localeCompare(right.title));
+      matches.forEach((node) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "recipe-finder-row";
+        const name = document.createElement("span");
+        name.className = "recipe-finder-name";
+        const primaryOutput = (node.recipe?.currentOutputs || [])[0]?.item || node.recipe?.primaryOutput;
+        if (primaryOutput) {
+          name.appendChild(makeMaterialIcon(primaryOutput, "recipe-finder-output-icon"));
+        }
+        if (node.nonBaseRecipe) {
+          const tag = document.createElement("span");
+          tag.className = "alternate-recipe-tag";
+          tag.textContent = "ALT";
+          name.appendChild(tag);
+        }
+        name.appendChild(document.createTextNode(node.title));
+        const formula = document.createElement("span");
+        formula.className = "recipe-finder-formula";
+        formula.append(
+          renderRecipeSide(node.recipe?.currentInputs || []),
+          document.createTextNode(" = "),
+          renderRecipeSide(node.recipe?.currentOutputs || []),
+        );
+        button.append(name, formula);
+        button.addEventListener("click", () => {
+          overlay.remove();
+          locateGraphNode(node.id);
+          analytics.track("recipe_finder_located", { recipeId: node.id });
+        });
+        list.appendChild(button);
+      });
+    }
+    renderList();
+    search.focus();
   }
 
   function refreshRecipeFilterControls() {
@@ -3640,12 +3845,25 @@
       cell.appendChild(button);
     }
 
-    const recipeText = Array.isArray(row.recipes) ? row.recipes.join(", ") : "";
-    if (recipeText) {
+    const recipeNames = Array.isArray(row.recipes) ? row.recipes : [];
+    const recipeIds = Array.isArray(row.recipeIds) ? row.recipeIds : [];
+    recipeNames.forEach((recipeName, index) => {
+      if (index > 0) {
+        cell.appendChild(document.createTextNode(", "));
+      }
       const text = document.createElement("span");
-      text.textContent = recipeText;
+      text.textContent = recipeName;
       cell.appendChild(text);
-    }
+      const recipeId = String(recipeIds[index] || "").trim();
+      if (recipeId && !recipeId.startsWith(DIRECT_RAW_RECIPE_ID) && !isDefaultRecipeId(recipeId)) {
+        const tag = document.createElement("span");
+        tag.className = "recipe-usage-tag alternate-recipe-tag";
+        tag.textContent = "ALT";
+        tag.title = t("kind.alternateRecipe");
+        tag.setAttribute("aria-label", t("kind.alternateRecipe"));
+        cell.appendChild(tag);
+      }
+    });
     tr.appendChild(cell);
   }
 
