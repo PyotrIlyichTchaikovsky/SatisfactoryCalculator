@@ -42,6 +42,8 @@
   "loading.failedTitle": "生产规划工具加载失败",
   "loading.failed": "请检查网络连接，然后重试。",
   "loading.retry": "重新加载",
+  "calculating.title": "正在计算生产方案……",
+  "calculating.message": "正在计算生产方案，请稍候。",
   "app.title": "Satisfactory 生产规划工具",
   "app.description": "规划 Satisfactory 的生产目标、配方、原始资源与工厂流程。",
   "app.connecting": "正在连接生产规划服务……",

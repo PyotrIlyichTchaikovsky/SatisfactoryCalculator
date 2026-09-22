@@ -42,6 +42,8 @@
   "loading.failedTitle": "生產規劃工具載入失敗",
   "loading.failed": "請檢查網路連線，然後重試。",
   "loading.retry": "重新載入",
+  "calculating.title": "正在計算生產方案……",
+  "calculating.message": "正在計算生產方案，請稍候。",
   "app.title": "Satisfactory 生產規劃工具",
   "app.description": "規劃 Satisfactory 的生產目標、配方、原始資源與工廠流程。",
   "app.connecting": "正在連線生產規劃服務……",

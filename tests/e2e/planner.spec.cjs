@@ -169,6 +169,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   await expect(page.locator('.direct-raw-base-recipe')).toContainText('Directly');
   await expect(page.locator('.direct-raw-checkbox')).toBeChecked();
   await page.getByRole('button',{name:'Close',exact:true}).click();
+  await expect(page.locator('.graph-node.raw.located')).toBeVisible();
   await page.getByRole('button',{name:'Save',exact:true}).click();
   await page.reload();
   await expect(page.locator('#dataSummary')).toContainText('recipes');

@@ -8,6 +8,8 @@
   "loading.failedTitle": "Unable to load the planner",
   "loading.failed": "Check your connection and try again.",
   "loading.retry": "Try again",
+  "calculating.title": "Calculating production plan…",
+  "calculating.message": "Please wait while the production plan is calculated.",
   "language.label": "Language",
   "language.auto": "Auto",
   "targets.title": "Production Targets",

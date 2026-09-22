@@ -16,6 +16,7 @@
   const initialLoadingTitle = document.getElementById("initialLoadingTitle");
   const initialLoadingMessage = document.getElementById("initialLoadingMessage");
   const initialLoadingRetry = document.getElementById("initialLoadingRetry");
+  const calculationLoading = document.getElementById("calculationLoading");
   const statusMessage = document.getElementById("statusMessage");
   const treeView = document.getElementById("treeView");
   const tableView = document.getElementById("tableView");
@@ -195,6 +196,7 @@
 
     let calculationResult = null;
     const calculationStartedAt = performance.now();
+    setCalculationLoading(true);
     analytics.track("calculation_started", {
       targetCount: targets.length,
       enabledRecipeCount: selectedRecipeIds.size,
@@ -228,7 +230,11 @@
       lastServerTargets = targetSnapshotsFromTargets(targets);
       lastServerPlanSignature = planSignature();
       renderPlannerResult(result, { selectTree: true });
-      handlePostCalculationRecipeLocation(options.locateRecipeIds);
+      handlePostCalculationRecipeLocation(
+        options.locateRecipeIds,
+        options.locateMaterialClasses,
+        options.focusMaterialClass,
+      );
       updateRecipeFilterButton();
       const targetCount = result.summary?.targetCount ?? targets.length;
       const totalRows = result.summary?.totalRows ?? 0;
@@ -261,7 +267,16 @@
         targetCount: targets.length,
         reason: error?.name || "error",
       });
+    } finally {
+      setCalculationLoading(false);
     }
+  }
+
+  function setCalculationLoading(isLoading) {
+    if (!calculationLoading) return;
+    calculationLoading.hidden = !isLoading;
+    calculationLoading.setAttribute("aria-busy", isLoading ? "true" : "false");
+    document.body.classList.toggle("is-calculating", isLoading);
   }
 
   function handleRecipeExpansionRequired(result, targets) {
@@ -2212,16 +2227,49 @@
     return viewport;
   }
 
-  function handlePostCalculationRecipeLocation(recipeIds) {
+  function handlePostCalculationRecipeLocation(recipeIds, materialClasses, focusMaterialClass = "") {
+    const normalizedFocusMaterialClass = String(focusMaterialClass || "").trim();
+    if (normalizedFocusMaterialClass && locateGraphMaterial(normalizedFocusMaterialClass)) {
+      changedRecipeIdsToLocate = [];
+      if (locateChangedRecipesButton) locateChangedRecipesButton.hidden = true;
+      return;
+    }
     const ids = normalizedRecipeIdList(recipeIds);
+    const requestedMaterials = new Set(normalizedRecipeIdList(materialClasses));
     const presentIds = ids.filter((id) => lastRenderedGraph?.nodeById?.has(id));
-    changedRecipeIdsToLocate = presentIds;
+    const locatedIds = new Set(presentIds);
+    (lastRenderedGraph?.nodes || []).forEach((node) => {
+      if (node.type !== "recipe" || !requestedMaterials.size) return;
+      const producesChangedMaterial = (node.recipe?.currentOutputs || []).some((output) => (
+        requestedMaterials.has(String(output.item?.className || ""))
+      ));
+      if (producesChangedMaterial) locatedIds.add(node.id);
+    });
+    changedRecipeIdsToLocate = Array.from(locatedIds);
     if (locateChangedRecipesButton) {
-      locateChangedRecipesButton.hidden = presentIds.length < 2;
+      locateChangedRecipesButton.hidden = changedRecipeIdsToLocate.length < 2;
     }
-    if (presentIds.length === 1) {
-      locateGraphNode(presentIds[0]);
+    if (changedRecipeIdsToLocate.length === 1) {
+      locateGraphNode(changedRecipeIdsToLocate[0]);
     }
+  }
+
+  function locateGraphMaterial(materialClass) {
+    const graph = lastRenderedGraph;
+    const normalizedMaterialClass = String(materialClass || "").trim();
+    if (!graph || !normalizedMaterialClass) return false;
+    const recipeNodes = graph.nodes.filter((node) => node.type === "recipe");
+    const primaryRecipe = recipeNodes.find((node) => (
+      String((node.recipe?.currentOutputs || [])[0]?.item?.className || node.recipe?.primaryOutput?.className || "")
+        === normalizedMaterialClass
+    ));
+    const anyRecipe = recipeNodes.find((node) => (
+      (node.recipe?.currentOutputs || []).some((output) => output.item?.className === normalizedMaterialClass)
+    ));
+    const rawNode = graph.nodes.find((node) => (
+      node.type === "raw" && node.item?.className === normalizedMaterialClass
+    ));
+    return locateGraphNode((primaryRecipe || anyRecipe || rawNode)?.id || "");
   }
 
   function locateGraphNode(nodeId) {
@@ -2597,7 +2645,12 @@
       itemClass: options.materialClass || "",
     });
     closeRecipeFilterDialog();
-    recipeFilterInitialSelection = new Set(selectedRecipeIds);
+    const focusMaterialClass = String(options.materialClass || "").trim();
+    recipeFilterInitialSelection = {
+      recipeIds: new Set(selectedRecipeIds),
+      disabledRawMaterials: new Set(disabledRawMaterialClasses),
+      focusMaterialClass,
+    };
     let activeFocusTarget = normalizeRecipeFilterFocus(options.focusTarget);
     const activeRecipeIdFilter = normalizeRecipeIdSet(options.filterRecipeIds || options.requiredRecipeIds);
     const hasRecipeIdFilter = activeRecipeIdFilter.size > 0;
@@ -2781,12 +2834,26 @@
     const shouldRefreshDisplayedPlan = Boolean(lastServerResult)
       && planSignature() !== lastServerPlanSignature;
     const changedRecipeIds = recipeFilterInitialSelection
-      ? symmetricRecipeSelectionDifference(recipeFilterInitialSelection, selectedRecipeIds)
+      ? symmetricRecipeSelectionDifference(recipeFilterInitialSelection.recipeIds, selectedRecipeIds)
       : [];
+    const changedRawMaterialClasses = recipeFilterInitialSelection
+      ? symmetricRecipeSelectionDifference(recipeFilterInitialSelection.disabledRawMaterials, disabledRawMaterialClasses)
+      : [];
+    const changedMaterialClasses = new Set([
+      ...changedRawMaterialClasses,
+      ...recipeMaterialClassesForIds(changedRecipeIds),
+    ]);
+    const focusMaterialClass = String(recipeFilterInitialSelection?.focusMaterialClass || "").trim();
     recipeFilterInitialSelection = null;
     overlay.remove();
     if (shouldRefreshDisplayedPlan) {
-      calculate({ locateRecipeIds: changedRecipeIds });
+      calculate({
+        locateRecipeIds: changedRecipeIds,
+        locateMaterialClasses: Array.from(changedMaterialClasses),
+        focusMaterialClass,
+      });
+    } else if (focusMaterialClass) {
+      locateGraphMaterial(focusMaterialClass);
     }
   }
 
@@ -2799,6 +2866,20 @@
       if (!before.has(id)) changed.push(id);
     });
     return normalizedRecipeIdList(changed);
+  }
+
+  function recipeMaterialClassesForIds(recipeIds) {
+    const requestedIds = normalizeRecipeIdSet(recipeIds);
+    if (!requestedIds.size) return [];
+    const classes = new Set();
+    recipeCatalog.materials.forEach((group) => {
+      const materialClass = String(group?.item?.className || "").trim();
+      if (!materialClass) return;
+      if ((group.recipes || []).some((recipe) => requestedIds.has(String(recipe?.id || "")))) {
+        classes.add(materialClass);
+      }
+    });
+    return Array.from(classes);
   }
 
   function openFindRecipeDialog(options = {}) {

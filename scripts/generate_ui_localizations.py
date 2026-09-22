@@ -67,6 +67,7 @@ ZH_EXTRA = {
     "zh-CN": {
         "app.title": "Satisfactory 生产规划工具", "app.description": "规划 Satisfactory 的生产目标、配方、原始资源与工厂流程。",
         "app.connecting": "正在连接生产规划服务……", "targets.noSaved": "没有已保存方案", "targets.noHistory": "没有最近记录",
+        "calculating.title": "正在计算生产方案……", "calculating.message": "正在计算生产方案，请稍候。",
         "targets.selectSaved": "选择已保存方案", "targets.selectHistory": "选择最近方案", "targets.chooseTarget": "选择目标材料",
         "targets.chooseTargetHelp": "选择工厂需要生产的材料。", "targets.remove": "移除材料", "recipes.required": "所需配方",
         "recipes.chooseSearchMaterial": "选择要查找配方的材料", "recipes.chooseSearchHelp": "选择材料后只显示它可用的配方。",
@@ -103,7 +104,7 @@ ZH_EXTRA = {
     },
     "zh-TW": {
         "app.title": "Satisfactory 生產規劃工具", "app.description": "規劃 Satisfactory 的生產目標、配方、原始資源與工廠流程。",
-        "app.connecting": "正在連線生產規劃服務……", "targets.chooseTarget": "選擇目標材料", "targets.chooseTargetHelp": "選擇工廠需要生產的材料。",
+        "app.connecting": "正在連線生產規劃服務……", "calculating.title": "正在計算生產方案……", "calculating.message": "正在計算生產方案，請稍候。", "targets.chooseTarget": "選擇目標材料", "targets.chooseTargetHelp": "選擇工廠需要生產的材料。",
         "recipes.baseTag": "[基礎配方]", "recipes.recipeTag": "[配方]", "results.initial": "請選擇一個或多個材料，並輸入每分鐘所需產量。",
         "recipes.directRawName": "直接使用{name}", "results.findRecipe": "尋找配方", "results.locateChanged": "定位變更",
         "results.findRecipeSearch": "搜尋配方或產出材料", "results.findRecipeChooseMaterial": "選擇材料",

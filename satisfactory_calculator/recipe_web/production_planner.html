@@ -23,6 +23,14 @@
       <button id="initialLoadingRetry" class="primary-button" type="button" hidden data-i18n="loading.retry">Try again</button>
     </div>
   </div>
+  <div id="calculationLoading" class="calculation-loading" role="status" aria-live="assertive" aria-atomic="true" aria-busy="true" hidden>
+    <div class="calculation-loading-card">
+      <div class="initial-loading-spinner" aria-hidden="true"></div>
+      <h2 data-i18n="calculating.title">Calculating production plan…</h2>
+      <p data-i18n="calculating.message">Please wait while the production plan is calculated.</p>
+      <div class="initial-loading-progress" aria-hidden="true"><span></span></div>
+    </div>
+  </div>
 
   <header class="app-header">
     <div>

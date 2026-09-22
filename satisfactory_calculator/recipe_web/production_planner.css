@@ -84,6 +84,45 @@ body.is-loading {
   display: none;
 }
 
+.calculation-loading {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.52);
+  cursor: wait;
+}
+
+.calculation-loading[hidden] {
+  display: none;
+}
+
+.calculation-loading-card {
+  width: min(390px, 100%);
+  padding: 30px 32px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.3);
+  text-align: center;
+}
+
+.calculation-loading-card h2 {
+  margin: 18px 0 8px;
+  font-size: 1.2rem;
+}
+
+.calculation-loading-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.calculation-loading-card .initial-loading-progress {
+  margin-top: 20px;
+}
+
 .initial-loading.complete {
   opacity: 0;
   visibility: hidden;
