@@ -376,6 +376,10 @@ def deploy(config, cloud, state):
         state["phase"] = "publish_frontend_candidate"
         write_json(WORK / "transaction.json", state)
         frontend = cloud.publish_frontend(candidate["sha"])
+        # Pages updates the HTML route before every edge has the new hashed assets.
+        # Waiting here prevents the first browser verification from caching an HTML
+        # fallback response under a JavaScript asset URL on the production domain.
+        time.sleep(60)
         state["phase"] = "verify_deployed_pair"
         write_json(WORK / "transaction.json", state)
         check_live(config, state["manifest"])

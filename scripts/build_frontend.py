@@ -79,9 +79,12 @@ def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str
         "planner_config.js": render_planner_config(config).encode("utf-8"),
     }
     asset_names = {}
+    release_tag = str(config["sentryRelease"])[:12] or "local"
     for source_name, content in assets.items():
         stem, suffix = source_name.rsplit(".", 1)
-        hashed_name = f"{stem}.{content_hash(content)}.{suffix}"
+        # Keep each release on a distinct URL. This also prevents an edge-cached
+        # fallback response from an interrupted deployment being reused later.
+        hashed_name = f"{stem}.{content_hash(content)}.{release_tag}.{suffix}"
         (output_dir / hashed_name).write_bytes(content)
         asset_names[source_name] = hashed_name
     return asset_names
