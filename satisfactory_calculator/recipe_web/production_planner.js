@@ -29,6 +29,8 @@
   const GRAPH_FLOW_WIDTH = 8;
   const GRAPH_VIEWPORT_MIN_HEIGHT = 360;
   const GRAPH_VIEWPORT_BOTTOM_GAP = 18;
+  const GRAPH_BUS_CLEARANCE = 7;
+  const GRAPH_BUS_LANE_SPACING = GRAPH_FLOW_WIDTH + 2;
   const RECIPE_MODE_BASE = "base";
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
   const DIRECT_RAW_RECIPE_ID = "__raw__";
@@ -1259,6 +1261,7 @@
     const viewport = renderFlowGraph(graph);
     treeView.replaceChildren(viewport);
     fitGraphViewportHeight(viewport);
+    layoutGraphEdgeLabels(graph);
     restoreGraphViewportScroll(viewport, scrollState);
   }
 
@@ -1794,11 +1797,10 @@
     const maxColumn = Math.max(0, ...sortedColumns);
     const autoWidth = constants.marginX * 2 + constants.nodeWidth + maxColumn * (constants.nodeWidth + constants.columnGap);
     const autoHeight = Math.max(constants.minHeight, constants.marginY * 2 + maxColumnHeight);
-    const { width, height } = graphExtents(nodes, autoWidth, autoHeight);
-
     refreshEdgeFeedback(edges, nodeById);
-    routeEdges(edges, nodeById);
-    return { nodes, width, height, nodeById };
+    const busRoutes = routeEdges(edges, nodeById, constants);
+    const { width, height } = graphExtents(nodes, autoWidth, autoHeight, edges);
+    return { nodes, width, height, nodeById, busRoutes, columnGap: constants.columnGap };
   }
 
   function applySavedRecipeNodePositions(nodes) {
@@ -1819,10 +1821,14 @@
     });
   }
 
-  function graphExtents(nodes, minWidth, minHeight) {
+  function graphExtents(nodes, minWidth, minHeight, edges = []) {
     const padding = 56;
     const maxRight = Math.max(0, ...nodes.map((node) => Number(node.x) + Number(node.width) + padding));
-    const maxBottom = Math.max(0, ...nodes.map((node) => Number(node.y) + Number(node.height) + padding));
+    const maxBottom = Math.max(
+      0,
+      ...nodes.map((node) => Number(node.y) + Number(node.height) + padding),
+      ...edges.filter((edge) => edge.busLaneY != null).map((edge) => Number(edge.busLaneY) + padding),
+    );
     return {
       width: Math.ceil(Math.max(minWidth, maxRight)),
       height: Math.ceil(Math.max(minHeight, maxBottom)),
@@ -1834,8 +1840,12 @@
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
       edge.feedback = Boolean(source && target && source.x >= target.x);
-      edge.pathElement?.setAttribute("class", `graph-flow${edge.feedback ? " feedback" : ""}`);
+      edge.pathElement?.setAttribute("class", graphEdgePathClass(edge));
     });
+  }
+
+  function graphEdgePathClass(edge) {
+    return `graph-flow${edge.feedback ? " feedback" : ""}${edge.busRouteId ? " bus-route" : ""}`;
   }
 
   function assignDependencyColumns(nodes, edges) {
@@ -2003,7 +2013,7 @@
         if (source && source.column < node.column) {
           neighbors.push({
             rank: rank.get(source.id) ?? 0,
-            weight: graphLayoutEdgeWeight(edge),
+            weight: graphLayoutEdgeWeight(edge) * (source.column === node.column - 1 ? 4 : 1),
           });
         }
       } else if (direction === "outgoing" && edge.source === node.id) {
@@ -2011,7 +2021,7 @@
         if (target && target.column > node.column) {
           neighbors.push({
             rank: rank.get(target.id) ?? 0,
-            weight: graphLayoutEdgeWeight(edge),
+            weight: graphLayoutEdgeWeight(edge) * (target.column === node.column + 1 ? 4 : 1),
           });
         }
       }
@@ -2070,7 +2080,8 @@
       const targetRank = rank.get(target.id) ?? 0;
       const weight = graphLayoutEdgeWeight(edge);
       const span = Math.max(1, target.column - source.column);
-      weightedDistance += weight * Math.abs(sourceRank - targetRank) * (1 + (span - 1) * 0.12);
+      const adjacencyWeight = span === 1 ? 4 : span === 2 ? 1.7 : 1;
+      weightedDistance += weight * adjacencyWeight * Math.abs(sourceRank - targetRank) * (1 + (span - 1) * 0.08);
       forwardEdges.push({
         source: source.id,
         target: target.id,
@@ -2118,7 +2129,7 @@
     });
   }
 
-  function routeEdges(edges, nodeById) {
+  function routeEdges(edges, nodeById, layout = {}) {
     const outgoing = new Map();
     const incoming = new Map();
     edges.forEach((edge) => {
@@ -2149,12 +2160,440 @@
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
       if (!source || !target) return;
+      const reverse = Number(target.column) < Number(source.column);
       edge.x1 = source.x + source.width;
       edge.y1 = source.y + source.height / 2 + edge.sourceOffset;
       edge.x2 = target.x;
       edge.y2 = target.y + target.height / 2 + edge.targetOffset;
-      positionEdgeLabel(edge);
+      edge.busRouteId = "";
+      edge.busDropX = null;
+      edge.busLaneY = null;
+      edge.busBranchPath = "";
+      edge.busBranchGeometry = null;
+      edge.busBranchLabel = null;
     });
+
+    const busEdges = edges.filter((edge) => {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      if (!source || !target) return false;
+      const columnSpan = Number(target.column) - Number(source.column);
+      return columnSpan < 0 || columnSpan >= 2;
+    });
+    const directEdges = new Set(busEdges);
+    const buses = assignGraphBusRoutes(busEdges, nodeById, layout);
+    edges.forEach((edge) => {
+      if (directEdges.has(edge)) {
+        positionBusBranchLabel(edge);
+      } else {
+        positionEdgeLabel(edge);
+      }
+      edge.pathElement?.setAttribute("class", graphEdgePathClass(edge));
+    });
+    return buses;
+  }
+
+  function assignGraphBusRoutes(edges, nodeById, layout = {}) {
+    if (!edges.length) return [];
+    const lanes = graphBusLanes(Array.from(nodeById.values()));
+    const busGroups = new Map();
+    edges.forEach((edge) => {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      const direction = Number(target?.column) < Number(source?.column) ? "reverse" : "forward";
+      const key = `${edge.source}\n${direction}`;
+      if (!busGroups.has(key)) busGroups.set(key, []);
+      busGroups.get(key).push({ edge, direction });
+    });
+    const occupied = new Map(lanes.map((lane) => [lane.id, []]));
+    const columnGap = Math.max(80, Number(layout.columnGap) || 285);
+    const columnPitch = Math.max(200, Number(layout.nodeWidth) || 208) + columnGap;
+    const buses = [];
+
+    Array.from(busGroups.entries()).forEach(([busId, groupEntries]) => {
+      const group = groupEntries.map((entry) => entry.edge);
+      const source = nodeById.get(group[0].source);
+      if (!source) return;
+      const directions = new Map(groupEntries.map((entry) => [entry.edge, entry.direction]));
+      const direction = groupEntries[0].direction;
+      const boardX = graphBusBoardX(source, direction, columnGap, columnPitch);
+      const start = {
+        x: Number(source.x) + Number(source.width),
+        y: Number(source.y) + Number(source.height) / 2,
+      };
+      let best = null;
+      lanes.forEach((lane) => {
+        const stops = group.map((edge) => {
+          const target = nodeById.get(edge.target);
+          const edgeDirection = directions.get(edge);
+          const dropX = graphBusDropX(target, edgeDirection, columnGap, columnPitch);
+          const branchCurve = graphBusBranchGeometry(edge, lane.y, dropX, edgeDirection);
+          const clear = target && graphCurveGeometryIsClear(branchCurve, nodeById, target.id);
+          return { edge, target, dropX, edgeDirection, clear };
+        });
+        if (stops.some((stop) => !stop.clear)) return;
+        const minX = Math.min(boardX, ...stops.map((stop) => stop.dropX));
+        const maxX = Math.max(boardX, ...stops.map((stop) => stop.dropX));
+        if (!graphHorizontalRouteIsClear(lane.y, minX, maxX, nodeById)) return;
+        const sourceCurve = graphBusSourceCurve(start, boardX, lane.y, direction);
+        if (!graphCurveGeometryIsClear(sourceCurve, nodeById, source.id)) return;
+        const laneOccupants = occupied.get(lane.id) || [];
+        const overlaps = laneOccupants.filter((interval) => minX < interval.maxX && maxX > interval.minX).length;
+        const sourceDistance = Math.abs(start.y - lane.y);
+        const targetDistance = group.reduce((sum, edge) => sum + Math.abs(edge.y2 - lane.y), 0) / group.length;
+        const aboveSourcePenalty = lane.y < start.y ? 500 : 0;
+        const score = sourceDistance * 5 + targetDistance * 0.35 + aboveSourcePenalty + overlaps * 10000;
+        if (!best || score < best.score) best = { lane, stops, sourceCurve, minX, maxX, score };
+      });
+
+      if (!best) {
+        best = graphFallbackBusRoute(group, source, nodeById, columnGap, columnPitch, lanes, direction);
+      }
+      if (!best) return;
+      best.lane.usage += 1;
+      occupied.get(best.lane.id)?.push({ minX: best.minX, maxX: best.maxX, busId });
+      const stopsByX = new Map();
+      const bus = {
+        id: busId,
+        sourceId: source.id,
+        direction,
+        color: source.edgeColor || group[0].color,
+        width: GRAPH_FLOW_WIDTH,
+        boardX,
+        y: best.lane.y,
+        sourceCurve: best.sourceCurve || graphBusSourceCurve(start, boardX, best.lane.y, direction),
+        edges: group,
+        directions,
+        stops: [],
+        trunk: null,
+        sourceElement: null,
+        trunkElement: null,
+      };
+      group.forEach((edge) => {
+        const target = nodeById.get(edge.target);
+        const edgeDirection = directions.get(edge);
+        const dropX = graphBusDropX(target, edgeDirection, columnGap, columnPitch);
+        const stopId = `${busId}\n${Math.round(dropX * 10)}`;
+        if (!stopsByX.has(stopId)) {
+          stopsByX.set(stopId, {
+            id: stopId,
+            x: dropX,
+            edges: [],
+            element: null,
+          });
+        }
+        const stop = stopsByX.get(stopId);
+        stop.edges.push(edge);
+        edge.busRouteId = busId;
+        edge.busDropX = dropX;
+        edge.busLaneY = best.lane.y;
+        edge.busBranchGeometry = graphBusBranchGeometry(edge, best.lane.y, dropX, edgeDirection);
+        edge.busBranchPath = graphBusBranchPath(edge, best.lane.y, dropX, edgeDirection);
+        edge.busBranchLabel = graphBusBranchLabel(edge.busBranchGeometry);
+      });
+      bus.stops = Array.from(stopsByX.values());
+      const trunkEndX = direction === "reverse"
+        ? Math.min(...bus.stops.map((stop) => stop.x))
+        : Math.max(...bus.stops.map((stop) => stop.x));
+      bus.trunk = `M ${boardX} ${best.lane.y} L ${trunkEndX} ${best.lane.y}`;
+      buses.push(bus);
+    });
+    return buses;
+  }
+
+  function graphBusLanes(nodes) {
+    const clearance = GRAPH_BUS_CLEARANCE + GRAPH_FLOW_WIDTH / 2;
+    const intervals = nodes
+      .map((node) => ({
+        min: Number(node.y) - clearance,
+        max: Number(node.y) + Number(node.height) + clearance,
+      }))
+      .sort((a, b) => a.min - b.min);
+    const merged = [];
+    intervals.forEach((interval) => {
+      const previous = merged[merged.length - 1];
+      if (previous && interval.min <= previous.max) {
+        previous.max = Math.max(previous.max, interval.max);
+      } else {
+        merged.push({ ...interval });
+      }
+    });
+    if (!merged.length) return [];
+    const lanes = [];
+    const spacing = GRAPH_BUS_LANE_SPACING;
+    const addLanesInGap = (start, end) => {
+      let index = 0;
+      for (let y = start + GRAPH_FLOW_WIDTH / 2; y <= end - GRAPH_FLOW_WIDTH / 2; y += spacing) {
+        lanes.push({ id: Math.round(y * 10), y, usage: index });
+        index += 1;
+      }
+    };
+    const firstTop = Math.min(...nodes.map((node) => Number(node.y)));
+    const lastBottom = Math.max(...nodes.map((node) => Number(node.y) + Number(node.height)));
+    for (let offset = GRAPH_BUS_LANE_SPACING + 3; offset <= 3 * GRAPH_BUS_LANE_SPACING; offset += GRAPH_BUS_LANE_SPACING) {
+      const y = Math.max(8, firstTop - offset);
+      if (y < merged[0].min) lanes.push({ id: Math.round(y * 10), y, usage: 0 });
+    }
+    for (let index = 0; index < merged.length - 1; index += 1) {
+      addLanesInGap(merged[index].max, merged[index + 1].min);
+    }
+    for (let offset = GRAPH_BUS_LANE_SPACING + 3; offset <= 3 * GRAPH_BUS_LANE_SPACING; offset += GRAPH_BUS_LANE_SPACING) {
+      const y = lastBottom + offset;
+      lanes.push({ id: Math.round(y * 10), y, usage: 0 });
+    }
+    const uniqueLanes = new Map();
+    lanes.sort((a, b) => a.y - b.y).forEach((lane) => {
+      if (!uniqueLanes.has(lane.id)) uniqueLanes.set(lane.id, lane);
+    });
+    const result = Array.from(uniqueLanes.values());
+    result.forEach((lane, index) => {
+      lane.usage = 0;
+      lane.order = index;
+    });
+    return result;
+  }
+
+  function graphHorizontalRouteIsClear(y, x1, x2, nodeById) {
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    for (const node of nodeById.values()) {
+      const nodeLeft = Number(node.x) - GRAPH_BUS_CLEARANCE;
+      const nodeRight = Number(node.x) + Number(node.width) + GRAPH_BUS_CLEARANCE;
+      const nodeTop = Number(node.y) - GRAPH_BUS_CLEARANCE - GRAPH_FLOW_WIDTH / 2;
+      const nodeBottom = Number(node.y) + Number(node.height) + GRAPH_BUS_CLEARANCE + GRAPH_FLOW_WIDTH / 2;
+      if (maxX > nodeLeft && minX < nodeRight && y > nodeTop && y < nodeBottom) return false;
+    }
+    return true;
+  }
+
+  function graphEdgePathIsBlocked(edge, nodeById) {
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (!source || !target) return false;
+    for (let step = 1; step < 12; step += 1) {
+      const point = edgePoint(edge, step / 12);
+      for (const node of nodeById.values()) {
+        if (node.id === source.id || node.id === target.id) continue;
+        if (
+          point.x >= node.x - GRAPH_BUS_CLEARANCE
+          && point.x <= node.x + node.width + GRAPH_BUS_CLEARANCE
+          && point.y >= node.y - GRAPH_BUS_CLEARANCE
+          && point.y <= node.y + node.height + GRAPH_BUS_CLEARANCE
+        ) return true;
+      }
+    }
+    return false;
+  }
+
+  function graphFallbackBusRoute(group, source, nodeById, columnGap, columnPitch, lanes, direction) {
+    const lane = lanes.reduce((best, candidate) => {
+      const distance = group.reduce((sum, edge) => sum + Math.abs(edge.y1 - candidate.y) + Math.abs(edge.y2 - candidate.y), 0);
+      return !best || distance < best.distance ? { lane: candidate, distance } : best;
+    }, null)?.lane;
+    if (!lane) return null;
+    const boardX = graphBusBoardX(source, direction, columnGap, columnPitch);
+    const targetXs = group.map((edge) => {
+      const target = nodeById.get(edge.target);
+      return target ? graphBusDropX(target, graphBusEdgeDirection(source, target), columnGap, columnPitch) : edge.x2;
+    });
+    return {
+      lane,
+      boardX,
+      targetXs,
+      minX: Math.min(boardX, ...targetXs),
+      maxX: Math.max(boardX, ...targetXs),
+    };
+  }
+
+  function graphBusBoardX(source, direction, columnGap, columnPitch) {
+    if (direction === "reverse") return Number(source.x) + Number(source.width);
+    return Number(source.x) + columnPitch;
+  }
+
+  function graphBusDropX(target, direction, columnGap, columnPitch) {
+    if (!target) return 0;
+    if (direction === "reverse") return Number(target.x);
+    return Number(target.x) - columnGap;
+  }
+
+  function graphBusSourceCurve(start, boardX, laneY, direction) {
+    if (direction !== "reverse") return graphCurveGeometry(start, { x: boardX, y: laneY });
+    const reach = Math.min(72, Math.max(36, Math.abs(laneY - start.y) * 0.22));
+    const control1 = { x: boardX + reach, y: start.y };
+    const control2 = { x: boardX + reach, y: laneY };
+    return {
+      p0: start,
+      c1: control1,
+      c2: control2,
+      p3: { x: boardX, y: laneY },
+      path: `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${boardX} ${laneY}`,
+    };
+  }
+
+  function graphBusEdgeDirection(source, target) {
+    const columnSpan = Number(target?.column) - Number(source?.column);
+    return columnSpan < 0 ? "reverse" : "forward";
+  }
+
+  function graphBusBranchGeometry(edge, laneY, dropX, direction) {
+    const start = { x: dropX, y: laneY };
+    const end = { x: edge.x2, y: edge.y2 };
+    if (direction === "reverse" && Math.abs(end.x - start.x) < 0.5) {
+      const deltaY = end.y - start.y;
+      const reach = Math.min(48, Math.max(24, Math.abs(deltaY) * 0.25));
+      const c1 = { x: start.x - reach, y: start.y };
+      const c2 = { x: end.x - reach, y: end.y };
+      return {
+        p0: start,
+        c1,
+        c2,
+        p3: end,
+        path: `M ${start.x} ${start.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
+      };
+    }
+    return graphCurveGeometry(start, end);
+  }
+
+  function graphBusBranchPath(edge, laneY, dropX, direction) {
+    return graphBusBranchGeometry(edge, laneY, dropX, direction).path;
+  }
+
+  function graphBusBranchLabel(curve) {
+    const point = cubicPoint(curve.p0, curve.c1, curve.c2, curve.p3, 0.62);
+    return { x: point.x, y: point.y };
+  }
+
+  function graphCurveGeometry(start, end) {
+    const direction = Math.sign(end.x - start.x) || 1;
+    const distance = Math.abs(end.x - start.x);
+    const reach = Math.min(distance / 2, 150, Math.max(4, distance * 0.42));
+    const c1 = {
+      x: start.x + direction * reach,
+      y: start.y,
+    };
+    const c2 = {
+      x: end.x - direction * reach,
+      y: end.y,
+    };
+    return {
+      p0: start,
+      c1,
+      c2,
+      p3: end,
+      path: `M ${start.x} ${start.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
+    };
+  }
+
+  function graphCurveGeometryIsClear(curve, nodeById, excludeId) {
+    for (let step = 1; step < 20; step += 1) {
+      const point = cubicPoint(curve.p0, curve.c1, curve.c2, curve.p3, step / 20);
+      for (const node of nodeById.values()) {
+        if (node.id === excludeId) continue;
+        if (
+          point.x >= node.x - GRAPH_BUS_CLEARANCE
+          && point.x <= node.x + node.width + GRAPH_BUS_CLEARANCE
+          && point.y >= node.y - GRAPH_BUS_CLEARANCE
+          && point.y <= node.y + node.height + GRAPH_BUS_CLEARANCE
+        ) return false;
+      }
+    }
+    return true;
+  }
+
+  function graphCurveRouteIsClear(start, end, nodeById, excludeId) {
+    return graphCurveGeometryIsClear(graphCurveGeometry(start, end), nodeById, excludeId);
+  }
+
+  function positionBusBranchLabel(edge) {
+    if (!edge.busBranchLabel) return;
+    edge.labelX = edge.busBranchLabel.x;
+    edge.labelY = edge.busBranchLabel.y;
+  }
+
+  function layoutGraphEdgeLabels(graph) {
+    if (!graph.canvas?.isConnected) return;
+    const labels = graph.edges
+      .filter((edge) => edge.labelElement)
+      .map((edge) => {
+        const label = edge.labelElement;
+        const control = edge.busBranchGeometry || edgeControlPoints(edge);
+        const curve = edge.busBranchGeometry || {
+          p0: { x: edge.x1, y: edge.y1 },
+          c1: control.c1,
+          c2: control.c2,
+          p3: { x: edge.x2, y: edge.y2 },
+        };
+        return {
+          edge,
+          label,
+          curve,
+          width: Math.max(1, label.offsetWidth),
+          height: Math.max(1, label.offsetHeight),
+          highlighted: label.classList.contains("highlight-edge"),
+        };
+      })
+      .sort((a, b) => Number(b.highlighted) - Number(a.highlighted)
+        || (b.width * b.height) - (a.width * a.height)
+        || String(a.edge.id).localeCompare(String(b.edge.id)));
+    const padding = 6;
+    const nodeBounds = graph.nodes.map((node) => ({
+      left: Number(node.x) - padding,
+      right: Number(node.x) + Number(node.width) + padding,
+      top: Number(node.y) - padding,
+      bottom: Number(node.y) + Number(node.height) + padding,
+    }));
+    const placed = [];
+    const positions = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82, 0.1, 0.9, 0.04, 0.96];
+    const offsets = [0, -16, 16, -32, 32, -48, 48, -64, 64, -88, 88, -112, 112];
+
+    labels.forEach((entry) => {
+      const { edge, curve, width, height, label } = entry;
+      let best = null;
+      positions.forEach((t) => {
+        const point = cubicPoint(curve.p0, curve.c1, curve.c2, curve.p3, t);
+        const tangent = cubicTangent(curve.p0, curve.c1, curve.c2, curve.p3, t);
+        const tangentLength = Math.hypot(tangent.x, tangent.y) || 1;
+        const normal = { x: -tangent.y / tangentLength, y: tangent.x / tangentLength };
+        offsets.forEach((offset) => {
+          const x = point.x + normal.x * offset;
+          const y = point.y + normal.y * offset;
+          const rect = {
+            left: x - width / 2 - padding,
+            right: x + width / 2 + padding,
+            top: y - height / 2 - padding,
+            bottom: y + height / 2 + padding,
+          };
+          const nodeCollisions = nodeBounds.reduce((count, node) => count + Number(rectanglesOverlap(rect, node)), 0);
+          const labelCollisions = placed.reduce((count, previous) => count + Number(rectanglesOverlap(rect, previous)), 0);
+          const distanceCost = Math.abs(t - 0.5) * 160 + Math.abs(offset) * 1.25;
+          const score = nodeCollisions * 1000000 + labelCollisions * 100000 + distanceCost;
+          if (!best || score < best.score) best = { x, y, rect, score, nodeCollisions, labelCollisions };
+        });
+      });
+      if (!best) return;
+      edge.labelX = best.x;
+      edge.labelY = best.y;
+      label.style.left = `${best.x}px`;
+      label.style.top = `${best.y}px`;
+      placed.push(best.rect);
+    });
+  }
+
+  function cubicTangent(p0, p1, p2, p3, t) {
+    const inverse = 1 - t;
+    return {
+      x: 3 * inverse * inverse * (p1.x - p0.x)
+        + 6 * inverse * t * (p2.x - p1.x)
+        + 3 * t * t * (p3.x - p2.x),
+      y: 3 * inverse * inverse * (p1.y - p0.y)
+        + 6 * inverse * t * (p2.y - p1.y)
+        + 3 * t * t * (p3.y - p2.y),
+    };
+  }
+
+  function rectanglesOverlap(left, right) {
+    return left.left < right.right && left.right > right.left
+      && left.top < right.bottom && left.bottom > right.top;
   }
 
   function assignEdgeOffsets(edges, side) {
@@ -2197,13 +2636,14 @@
 
     graph.edges.forEach((edge) => {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("class", `graph-flow${edge.feedback ? " feedback" : ""}`);
+      path.setAttribute("class", graphEdgePathClass(edge));
       path.setAttribute("d", edgePath(edge));
       path.setAttribute("stroke", edge.color);
       path.setAttribute("stroke-width", String(edge.width));
       edge.pathElement = path;
       svg.appendChild(path);
     });
+    renderGraphBusRoutes(graph);
     canvas.appendChild(svg);
     canvas.appendChild(highlightSvg);
 
@@ -2225,6 +2665,35 @@
     bindGraphPan(viewport);
     applyGraphSelection(graph, selectedGraphRecipeId);
     return viewport;
+  }
+
+  function renderGraphBusRoutes(graph) {
+    if (!graph.svg) return;
+    graph.svg.querySelectorAll(".graph-bus-route-group").forEach((element) => element.remove());
+    (graph.busRoutes || []).forEach((bus) => {
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute("class", "graph-bus-route-group");
+      group.setAttribute("data-bus-id", bus.id);
+      bus.groupElement = group;
+
+      const sourcePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      sourcePath.setAttribute("class", "graph-flow bus-route graph-bus-source");
+      sourcePath.setAttribute("d", bus.sourceCurve.path);
+      sourcePath.setAttribute("stroke", bus.color);
+      sourcePath.setAttribute("stroke-width", String(bus.width));
+      bus.sourceElement = sourcePath;
+      group.appendChild(sourcePath);
+
+      const trunkPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      trunkPath.setAttribute("class", "graph-flow bus-route graph-bus-trunk");
+      trunkPath.setAttribute("d", bus.trunk);
+      trunkPath.setAttribute("stroke", bus.color);
+      trunkPath.setAttribute("stroke-width", String(bus.width));
+      bus.trunkElement = trunkPath;
+      group.appendChild(trunkPath);
+
+      graph.svg.appendChild(group);
+    });
   }
 
   function handlePostCalculationRecipeLocation(recipeIds, materialClasses, focusMaterialClass = "") {
@@ -2548,6 +3017,23 @@
       edge.labelElement?.classList.toggle("highlight-edge", isHighlighted);
       edge.labelElement?.classList.toggle("dimmed", hasSelection && !isHighlighted);
     });
+
+    (graph.busRoutes || []).forEach((bus) => {
+      const isHighlighted = bus.edges.some((edge) => highlightedEdgeIds.has(edge.id));
+      if (bus.groupElement && graph.highlightSvg && graph.svg) {
+        const targetSvg = isHighlighted ? graph.highlightSvg : graph.svg;
+        if (bus.groupElement.parentNode !== targetSvg) targetSvg.appendChild(bus.groupElement);
+      }
+      [bus.sourceElement, bus.trunkElement]
+        .filter(Boolean)
+        .forEach((element) => {
+          element.classList.toggle("highlight-edge", isHighlighted);
+          element.classList.toggle("flowing-edge", isHighlighted);
+          element.classList.toggle("dimmed", hasSelection && !isHighlighted);
+        });
+    });
+
+    if (graph.canvas?.isConnected) layoutGraphEdgeLabels(graph);
 
     graph.nodes.forEach((node) => {
       const isSelected = node.id === selectedNodeId;
@@ -3655,9 +4141,10 @@
   }
 
   function refreshRenderedGraph(graph) {
-    resizeGraphCanvas(graph);
     refreshEdgeFeedback(graph.edges, graph.nodeById);
-    routeEdges(graph.edges, graph.nodeById);
+    graph.busRoutes = routeEdges(graph.edges, graph.nodeById, { columnGap: graph.columnGap });
+    renderGraphBusRoutes(graph);
+    resizeGraphCanvas(graph);
     graph.edges.forEach((edge) => {
       edge.pathElement?.setAttribute("d", edgePath(edge));
       if (edge.labelElement) {
@@ -3669,7 +4156,7 @@
   }
 
   function resizeGraphCanvas(graph) {
-    const { width, height } = graphExtents(graph.nodes, graph.baseWidth, graph.baseHeight);
+    const { width, height } = graphExtents(graph.nodes, graph.baseWidth, graph.baseHeight, graph.edges);
     if (width === graph.width && height === graph.height) {
       return;
     }
@@ -3777,8 +4264,47 @@
   }
 
   function edgePath(edge) {
+    if (edge.busRouteId) {
+      return edge.busBranchPath;
+    }
     const control = edgeControlPoints(edge);
     return `M ${edge.x1} ${edge.y1} C ${control.c1.x} ${control.c1.y}, ${control.c2.x} ${control.c2.y}, ${edge.x2} ${edge.y2}`;
+  }
+
+  function roundedGraphPolylinePath(points) {
+    const corners = points.filter((point, index) => {
+      if (index === 0 || index === points.length - 1) return true;
+      const previous = points[index - 1];
+      const next = points[index + 1];
+      const incomingX = point.x - previous.x;
+      const incomingY = point.y - previous.y;
+      const outgoingX = next.x - point.x;
+      const outgoingY = next.y - point.y;
+      return Math.abs(incomingX * outgoingY - incomingY * outgoingX) > 0.5;
+    });
+    if (corners.length < 2) return `M ${points[0].x} ${points[0].y} L ${points[points.length - 1].x} ${points[points.length - 1].y}`;
+    let path = `M ${corners[0].x} ${corners[0].y}`;
+    const radius = 12;
+    for (let index = 1; index < corners.length - 1; index += 1) {
+      const previous = corners[index - 1];
+      const current = corners[index];
+      const next = corners[index + 1];
+      const previousDistance = Math.hypot(current.x - previous.x, current.y - previous.y);
+      const nextDistance = Math.hypot(next.x - current.x, next.y - current.y);
+      const cornerRadius = Math.min(radius, previousDistance / 2, nextDistance / 2);
+      const before = {
+        x: current.x - Math.sign(current.x - previous.x) * cornerRadius,
+        y: current.y - Math.sign(current.y - previous.y) * cornerRadius,
+      };
+      const after = {
+        x: current.x + Math.sign(next.x - current.x) * cornerRadius,
+        y: current.y + Math.sign(next.y - current.y) * cornerRadius,
+      };
+      path += ` L ${before.x} ${before.y} Q ${current.x} ${current.y}, ${after.x} ${after.y}`;
+    }
+    const last = corners[corners.length - 1];
+    path += ` L ${last.x} ${last.y}`;
+    return path;
   }
 
   function graphNodeKindText(node) {

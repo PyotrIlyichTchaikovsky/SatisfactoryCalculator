@@ -954,6 +954,7 @@ body.material-picker-open {
 .graph-flow {
   fill: none;
   stroke-linecap: round;
+  stroke-linejoin: round;
   stroke-opacity: 0.52;
   mix-blend-mode: screen;
   transition: stroke-opacity 0.16s ease, filter 0.16s ease;
@@ -984,7 +985,7 @@ body.material-picker-open {
 
 .graph-edge-label {
   position: absolute;
-  z-index: 4;
+  z-index: 6;
   display: inline-grid;
   gap: 3px;
   transform: translate(-50%, -50%);
