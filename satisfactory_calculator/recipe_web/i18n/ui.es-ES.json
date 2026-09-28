@@ -1,6 +1,7 @@
 {
   "language.label": "Idioma",
   "language.auto": "Automático",
+  "info.title": "Información del plan",
   "targets.title": "Objetivos de producción",
   "targets.saved": "Planes guardados",
   "targets.history": "Historial reciente",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Elegir un objeto",
   "targets.rate": "Cantidad por minuto",
   "recipes.filter": "Filtro de recetas",
+  "recipes.short": "Recetas",
   "recipes.chooseMaterial": "Elegir material",
   "recipes.clearMaterial": "Quitar material",
   "recipes.resetAll": "Restablecer todo",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "No se pudo cargar el planificador",
   "loading.failed": "Comprueba tu conexión e inténtalo de nuevo.",
   "loading.retry": "Reintentar",
-  "privacy.link": "Privacidad"
+  "privacy.link": "Privacidad",
+  "focus.enterPage": "Ampliar vista de resultados",
+  "focus.enterBrowser": "Pantalla completa del navegador",
+  "focus.switchToPage": "Cambiar a pantalla completa de página",
+  "focus.exit": "Cerrar vista de pantalla completa",
+  "results.compactFocus": "Enfocar esta receta",
+  "results.compactExitHint": "Haz clic en un espacio vacío para volver",
+  "results.compactUpstream": "Anteriores",
+  "results.compactCurrent": "Receta enfocada",
+  "results.compactDownstream": "Siguientes"
 }

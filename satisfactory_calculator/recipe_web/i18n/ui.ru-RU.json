@@ -1,6 +1,7 @@
 {
   "language.label": "Язык",
   "language.auto": "Авто",
+  "info.title": "Сведения о плане",
   "targets.title": "Цели производства",
   "targets.saved": "Сохранённые планы",
   "targets.history": "Недавняя история",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Выбрать предмет",
   "targets.rate": "Количество в минуту",
   "recipes.filter": "Фильтр рецептов",
+  "recipes.short": "Рецепты",
   "recipes.chooseMaterial": "Выбрать материал",
   "recipes.clearMaterial": "Очистить материал",
   "recipes.resetAll": "Сбросить всё",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Не удалось загрузить планировщик",
   "loading.failed": "Проверьте подключение и повторите попытку.",
   "loading.retry": "Повторить",
-  "privacy.link": "Конфиденциальность"
+  "privacy.link": "Конфиденциальность",
+  "focus.enterPage": "Развернуть результаты",
+  "focus.enterBrowser": "Полноэкранный режим браузера",
+  "focus.switchToPage": "Переключить на полноэкранный режим страницы",
+  "focus.exit": "Закрыть полноэкранный режим",
+  "results.compactFocus": "Сфокусироваться на рецепте",
+  "results.compactExitHint": "Нажмите на пустое место, чтобы вернуться",
+  "results.compactUpstream": "Предшествующие",
+  "results.compactCurrent": "Рецепт в фокусе",
+  "results.compactDownstream": "Последующие"
 }

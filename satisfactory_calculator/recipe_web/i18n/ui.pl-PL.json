@@ -1,6 +1,7 @@
 {
   "language.label": "Język",
   "language.auto": "Automatycznie",
+  "info.title": "Informacje o planie",
   "targets.title": "Cele produkcji",
   "targets.saved": "Zapisane plany",
   "targets.history": "Ostatnia historia",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Wybierz przedmiot",
   "targets.rate": "Ilość na minutę",
   "recipes.filter": "Filtr receptur",
+  "recipes.short": "Receptury",
   "recipes.chooseMaterial": "Wybierz materiał",
   "recipes.clearMaterial": "Wyczyść materiał",
   "recipes.resetAll": "Resetuj wszystko",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Nie udało się wczytać planera",
   "loading.failed": "Sprawdź połączenie i spróbuj ponownie.",
   "loading.retry": "Spróbuj ponownie",
-  "privacy.link": "Prywatność"
+  "privacy.link": "Prywatność",
+  "focus.enterPage": "Rozwiń widok wyników",
+  "focus.enterBrowser": "Pełny ekran przeglądarki",
+  "focus.switchToPage": "Przełącz na pełny ekran strony",
+  "focus.exit": "Zamknij widok pełnoekranowy",
+  "results.compactFocus": "Skup na tej recepturze",
+  "results.compactExitHint": "Kliknij puste miejsce, aby wrócić",
+  "results.compactUpstream": "Dostawcy",
+  "results.compactCurrent": "Wybrana receptura",
+  "results.compactDownstream": "Odbiorcy"
 }

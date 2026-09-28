@@ -1,6 +1,7 @@
 {
   "language.label": "言語",
   "language.auto": "自動",
+  "info.title": "プラン情報",
   "targets.title": "生産目標",
   "targets.saved": "保存したプラン",
   "targets.history": "最近の履歴",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "アイテムを選択",
   "targets.rate": "毎分の生産量",
   "recipes.filter": "レシピフィルター",
+  "recipes.short": "レシピ",
   "recipes.chooseMaterial": "素材を選択",
   "recipes.clearMaterial": "素材を解除",
   "recipes.resetAll": "すべてリセット",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "プランナーを読み込めませんでした",
   "loading.failed": "接続を確認して、もう一度お試しください。",
   "loading.retry": "再読み込み",
-  "privacy.link": "プライバシー"
+  "privacy.link": "プライバシー",
+  "focus.enterPage": "結果表示を拡大",
+  "focus.enterBrowser": "ブラウザーを全画面表示",
+  "focus.switchToPage": "ページ全画面表示に切り替え",
+  "focus.exit": "全画面表示を閉じる",
+  "results.compactFocus": "このレシピにフォーカス",
+  "results.compactExitHint": "空白部分をクリックして戻る",
+  "results.compactUpstream": "上流",
+  "results.compactCurrent": "注目中のレシピ",
+  "results.compactDownstream": "下流"
 }

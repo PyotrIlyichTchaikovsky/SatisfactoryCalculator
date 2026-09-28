@@ -1,6 +1,7 @@
 {
   "language.label": "語言",
   "language.auto": "自動",
+  "info.title": "方案說明",
   "targets.title": "生產目標",
   "targets.saved": "已儲存方案",
   "targets.history": "最近記錄",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "選擇材料",
   "targets.rate": "每分鐘產量",
   "recipes.filter": "配方篩選",
+  "recipes.short": "配方",
   "recipes.chooseMaterial": "選擇材料",
   "recipes.clearMaterial": "清除材料",
   "recipes.resetAll": "全部重設",
@@ -73,5 +75,14 @@
   "table.unit": "單位",
   "table.type": "類型",
   "table.recipes": "使用的配方",
-  "privacy.link": "隱私"
+  "privacy.link": "隱私",
+  "focus.enterPage": "展開結果檢視",
+  "focus.enterBrowser": "瀏覽器全螢幕",
+  "focus.switchToPage": "切換至頁面全螢幕",
+  "focus.exit": "關閉全螢幕檢視",
+  "results.compactFocus": "聚焦此配方",
+  "results.compactExitHint": "點擊空白處返回",
+  "results.compactUpstream": "上游配方",
+  "results.compactCurrent": "關注配方",
+  "results.compactDownstream": "下游配方"
 }

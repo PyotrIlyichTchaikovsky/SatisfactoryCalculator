@@ -1,6 +1,7 @@
 {
   "language.label": "언어",
   "language.auto": "자동",
+  "info.title": "계획 정보",
   "targets.title": "생산 목표",
   "targets.saved": "저장된 계획",
   "targets.history": "최근 기록",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "아이템 선택",
   "targets.rate": "분당 생산량",
   "recipes.filter": "제작법 필터",
+  "recipes.short": "레시피",
   "recipes.chooseMaterial": "재료 선택",
   "recipes.clearMaterial": "재료 지우기",
   "recipes.resetAll": "모두 초기화",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "플래너를 불러올 수 없습니다",
   "loading.failed": "연결을 확인한 후 다시 시도하세요.",
   "loading.retry": "다시 시도",
-  "privacy.link": "개인정보 보호"
+  "privacy.link": "개인정보 보호",
+  "focus.enterPage": "결과 보기 확장",
+  "focus.enterBrowser": "브라우저 전체 화면",
+  "focus.switchToPage": "페이지 전체 화면으로 전환",
+  "focus.exit": "전체 화면 보기 닫기",
+  "results.compactFocus": "이 레시피에 초점 맞추기",
+  "results.compactExitHint": "돌아가려면 빈 공간을 클릭하세요",
+  "results.compactUpstream": "상류",
+  "results.compactCurrent": "집중 중인 레시피",
+  "results.compactDownstream": "하류"
 }

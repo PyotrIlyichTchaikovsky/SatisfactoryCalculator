@@ -1,6 +1,7 @@
 {
   "language.label": "Langue",
   "language.auto": "Auto",
+  "info.title": "Informations du plan",
   "targets.title": "Objectifs de production",
   "targets.saved": "Plans enregistrés",
   "targets.history": "Historique récent",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Choisir un objet",
   "targets.rate": "Débit par minute",
   "recipes.filter": "Filtre de recettes",
+  "recipes.short": "Recettes",
   "recipes.chooseMaterial": "Choisir un matériau",
   "recipes.clearMaterial": "Effacer le matériau",
   "recipes.resetAll": "Réinitialiser",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Impossible de charger le planificateur",
   "loading.failed": "Vérifiez votre connexion, puis réessayez.",
   "loading.retry": "Réessayer",
-  "privacy.link": "Confidentialité"
+  "privacy.link": "Confidentialité",
+  "focus.enterPage": "Agrandir la vue des résultats",
+  "focus.enterBrowser": "Plein écran du navigateur",
+  "focus.switchToPage": "Passer au plein écran de la page",
+  "focus.exit": "Fermer la vue plein écran",
+  "results.compactFocus": "Centrer cette recette",
+  "results.compactExitHint": "Cliquez sur un espace vide pour revenir",
+  "results.compactUpstream": "Amont",
+  "results.compactCurrent": "Recette ciblée",
+  "results.compactDownstream": "Aval"
 }

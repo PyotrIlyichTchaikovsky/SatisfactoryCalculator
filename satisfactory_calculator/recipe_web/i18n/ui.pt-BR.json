@@ -1,6 +1,7 @@
 {
   "language.label": "Idioma",
   "language.auto": "Automático",
+  "info.title": "Informações do plano",
   "targets.title": "Metas de produção",
   "targets.saved": "Planos salvos",
   "targets.history": "Histórico recente",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Escolher um item",
   "targets.rate": "Taxa por minuto",
   "recipes.filter": "Filtro de receitas",
+  "recipes.short": "Receitas",
   "recipes.chooseMaterial": "Escolher material",
   "recipes.clearMaterial": "Limpar material",
   "recipes.resetAll": "Redefinir tudo",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Não foi possível carregar o planejador",
   "loading.failed": "Verifique sua conexão e tente novamente.",
   "loading.retry": "Tentar novamente",
-  "privacy.link": "Privacidade"
+  "privacy.link": "Privacidade",
+  "focus.enterPage": "Expandir visualização dos resultados",
+  "focus.enterBrowser": "Tela cheia do navegador",
+  "focus.switchToPage": "Alternar para tela cheia da página",
+  "focus.exit": "Fechar visualização em tela cheia",
+  "results.compactFocus": "Focar nesta receita",
+  "results.compactExitHint": "Clique em uma área vazia para voltar",
+  "results.compactUpstream": "A montante",
+  "results.compactCurrent": "Receita em foco",
+  "results.compactDownstream": "A jusante"
 }

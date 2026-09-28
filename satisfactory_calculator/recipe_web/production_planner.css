@@ -226,20 +226,56 @@ select {
 }
 
 .language-field {
-  display: grid;
-  gap: 0.35rem;
-  min-width: 11rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .language-field select {
+  min-width: 9rem;
   min-height: 2.45rem;
   border: 1px solid var(--border);
   border-radius: 0.55rem;
   background: var(--surface);
   color: var(--text);
   padding: 0 0.7rem;
+}
+
+.language-select-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 9rem;
+}
+
+.language-select-wrap.is-auto {
+  width: min(17rem, calc(100vw - 7rem));
+}
+
+.language-select-wrap select.is-auto-selected {
+  width: 100%;
+  color: transparent;
+}
+
+.language-select-wrap select.is-auto-selected option {
+  color: var(--text);
+}
+
+.language-auto-detected {
+  position: absolute;
+  top: 50%;
+  right: 1.65rem;
+  left: 0.7rem;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .app-header h1 {
@@ -262,7 +298,15 @@ select {
   padding: 18px;
 }
 
+.left-column {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+
 .input-panel,
+.info-panel,
 .result-panel {
   min-width: 0;
   border: 1px solid var(--border);
@@ -274,6 +318,27 @@ select {
 .input-panel {
   align-self: start;
   padding: 16px;
+}
+
+.info-panel {
+  align-self: start;
+  padding: 16px;
+}
+
+.info-panel h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.data-summary {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.info-panel .status-message {
+  margin-bottom: 0;
 }
 
 .result-panel {
@@ -290,16 +355,10 @@ select {
   margin-bottom: 14px;
 }
 
-.panel-actions {
+.plan-library {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 8px;
-}
-
-.plan-library {
-  display: grid;
-  gap: 10px;
   margin-bottom: 14px;
 }
 
@@ -309,14 +368,8 @@ select {
 }
 
 .plan-select-field {
-  display: grid;
-  gap: 5px;
-}
-
-.plan-select-field > span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
+  flex: 1 1 145px;
+  min-width: 0;
 }
 
 .plan-picker {
@@ -432,6 +485,36 @@ select {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
+}
+
+.result-focus-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.result-focus-controls[hidden],
+.focus-mode-button[hidden] {
+  display: none;
+}
+
+.focus-mode-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  padding: 0;
+}
+
+.focus-mode-button svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 h2 {
@@ -875,6 +958,21 @@ body.material-picker-open {
   line-height: 1;
 }
 
+.recipe-filter-button {
+  white-space: nowrap;
+}
+
+.recipe-filter-change-count {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.recipe-filter-change-number {
+  color: #dc2626;
+  font-weight: 850;
+}
+
 .tabs {
   display: inline-flex;
   overflow: hidden;
@@ -926,6 +1024,43 @@ body.material-picker-open {
     linear-gradient(180deg, #232a30 0%, #1e252b 100%);
   cursor: grab;
   touch-action: none;
+}
+
+body.result-focus-mode {
+  overflow: hidden;
+}
+
+body.result-focus-mode .app-header,
+body.result-focus-mode .left-column,
+body.result-focus-mode .app-footer {
+  display: none;
+}
+
+body.result-focus-mode .app-shell {
+  display: block;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+body.result-focus-mode .result-panel {
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  padding: 12px;
+}
+
+body.result-focus-mode .result-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  padding: 4px 0 10px;
+  background: var(--surface);
+}
+
+body.result-focus-mode .graph-viewport {
+  min-height: 360px;
 }
 
 .graph-viewport.panning {
@@ -1126,11 +1261,95 @@ body.material-picker-open {
 
 .graph-node.selected {
   z-index: 45;
+  overflow: visible;
   opacity: 1;
   filter: none;
   outline: 4px solid rgba(250, 204, 21, 0.98);
   outline-offset: 4px;
   box-shadow: 0 20px 38px rgba(0, 0, 0, 0.42), 0 0 0 4px rgba(255, 255, 255, 0.72), 0 0 28px rgba(250, 204, 21, 0.62);
+}
+
+.compact-focus-entry {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 10px);
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 7px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(147, 197, 253, 0.9);
+  border-radius: 9px;
+  background: #102b3b;
+  color: #b9e8ff;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.48), 0 0 0 3px rgba(15, 23, 42, 0.82);
+  cursor: pointer;
+}
+
+.compact-focus-entry[hidden] {
+  display: none;
+}
+
+.compact-focus-entry:hover,
+.compact-focus-entry:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+  background: #164e63;
+  color: #fff;
+}
+
+.compact-focus-entry svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.compact-focus-view {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(48, 80, 96, 0.42), transparent 44%),
+    linear-gradient(180deg, #232a30 0%, #1e252b 100%);
+  color: #e5edf3;
+  cursor: default;
+}
+
+.compact-focus-view .compact-focus-graph-viewport {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: default;
+  touch-action: auto;
+}
+
+.compact-focus-view .graph-canvas {
+  min-height: 100%;
+}
+
+.compact-focus-exit-hint {
+  position: absolute;
+  z-index: 55;
+  right: 12px;
+  bottom: 10px;
+  left: 12px;
+  margin: 0;
+  color: rgba(213, 231, 241, 0.76);
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .graph-node.located {
@@ -1771,6 +1990,12 @@ body.material-picker-open {
 @media (max-width: 620px) {
   .app-header {
     padding: 14px 16px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .language-field select {
+    min-width: 8rem;
   }
 
   .app-shell {

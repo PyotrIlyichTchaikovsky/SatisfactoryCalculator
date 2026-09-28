@@ -1,6 +1,7 @@
 {
   "language.label": "Sprache",
   "language.auto": "Automatisch",
+  "info.title": "Planübersicht",
   "targets.title": "Produktionsziele",
   "targets.saved": "Gespeicherte Pläne",
   "targets.history": "Letzte Pläne",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Objekt auswählen",
   "targets.rate": "Rate pro Minute",
   "recipes.filter": "Rezeptfilter",
+  "recipes.short": "Rezepte",
   "recipes.chooseMaterial": "Material auswählen",
   "recipes.clearMaterial": "Material löschen",
   "recipes.resetAll": "Alles zurücksetzen",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Der Planer konnte nicht geladen werden",
   "loading.failed": "Überprüfe deine Verbindung und versuche es erneut.",
   "loading.retry": "Erneut versuchen",
-  "privacy.link": "Datenschutz"
+  "privacy.link": "Datenschutz",
+  "focus.enterPage": "Ergebnisansicht vergrößern",
+  "focus.enterBrowser": "Browser-Vollbild",
+  "focus.switchToPage": "Zur Seiten-Vollbildansicht wechseln",
+  "focus.exit": "Vollbildansicht schließen",
+  "results.compactFocus": "Dieses Rezept fokussieren",
+  "results.compactExitHint": "Zum Zurückkehren auf eine freie Stelle klicken",
+  "results.compactUpstream": "Vorgelagert",
+  "results.compactCurrent": "Fokussiertes Rezept",
+  "results.compactDownstream": "Nachgelagert"
 }

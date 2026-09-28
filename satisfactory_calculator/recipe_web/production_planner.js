@@ -24,6 +24,10 @@
   const findRecipeButton = document.getElementById("findRecipeButton");
   const locateChangedRecipesButton = document.getElementById("locateChangedRecipesButton");
   const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
+  const resultFocusControls = document.getElementById("resultFocusControls");
+  const pageFocusButton = document.getElementById("pageFocusButton");
+  const browserFocusButton = document.getElementById("browserFocusButton");
+  const exitFocusButton = document.getElementById("exitFocusButton");
   const STORAGE_KEY = "satisfactoryProductionPlanner.v1";
   const SELECTION_CACHE_VERSION = 6;
   const GRAPH_FLOW_WIDTH = 8;
@@ -48,6 +52,7 @@
   const preferredPlanByTargetKey = new Map();
   const recipeNodePositions = new Map();
   let activeTab = "tree";
+  let resultFocusMode = null;
   let savedState = loadPlannerState();
   let savedTargetPlans = normalizeTargetPlanList(savedState.savedTargetPlans);
   let targetHistory = normalizeTargetPlanList(savedState.targetHistory).slice(0, TARGET_HISTORY_LIMIT);
@@ -60,6 +65,8 @@
   let activeRecipeFilterDrag = null;
   let selectedGraphRecipeId = "";
   let selectedGraphHighlightDepth = 1;
+  let compactFocusView = null;
+  let compactFocusViewport = null;
   let suppressNextGraphBlankClick = false;
   let lastServerResult = null;
   let lastServerTargets = [];
@@ -82,6 +89,12 @@
   tabButtons.forEach((button) => {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
+  pageFocusButton?.addEventListener("click", switchToPageFocusMode);
+  browserFocusButton?.addEventListener("click", enterBrowserFullscreen);
+  exitFocusButton?.addEventListener("click", closeResultFocusMode);
+  document.addEventListener("fullscreenchange", handleFullscreenChange);
+  document.addEventListener("keydown", handleFocusModeKeydown);
+  updateFocusControls();
   resetLayoutButton?.addEventListener("click", resetGraphLayout);
   findRecipeButton?.addEventListener("click", () => openFindRecipeDialog());
   locateChangedRecipesButton?.addEventListener("click", () => openFindRecipeDialog({ recipeIds: changedRecipeIdsToLocate }));
@@ -137,7 +150,7 @@
       if (calculateButton) calculateButton.disabled = false;
       activatePlanCacheForCurrentTargets();
       dataSummary.textContent = summaryText(summary);
-      setStatus(t("status.loaded"), false);
+      setStatus(t("results.initial"), false);
       finishInitialLoading();
       analytics.track("planner_ready", {
         durationMs: performance.now() - plannerLoadStartedAt,
@@ -515,8 +528,8 @@
   }
 
   function renderTargetPlanSelectors() {
-    renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, t("targets.noSaved"), t("targets.selectSaved"));
-    renderTargetPlanPicker(historyPlanSelect, targetHistory, t("targets.noHistory"), t("targets.selectHistory"));
+    renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, t("targets.noSaved"), t("targets.saved"));
+    renderTargetPlanPicker(historyPlanSelect, targetHistory, t("targets.noHistory"), t("targets.history"));
     if (planLibrary instanceof HTMLElement) {
       planLibrary.hidden = !savedTargetPlans.length && !targetHistory.length;
     }
@@ -536,6 +549,8 @@
       field.hidden = !plans.length;
     }
     button.textContent = plans.length ? placeholderText : emptyText;
+    button.setAttribute("aria-label", plans.length ? placeholderText : emptyText);
+    button.title = plans.length ? placeholderText : emptyText;
     button.disabled = !plans.length;
     menu.hidden = true;
     menu.replaceChildren();
@@ -681,10 +696,27 @@
     if (!recipeFilterButton) {
       return;
     }
-    const total = Array.isArray(recipeCatalog.selectableRecipeIds) ? recipeCatalog.selectableRecipeIds.length : 0;
-    recipeFilterButton.textContent = total
-      ? `${t("recipes.filter")} ${formatInteger(selectedRecipeIds.size)}/${formatInteger(total)}`
-      : t("recipes.filter");
+    const count = recipeFilterButton.querySelector(".recipe-filter-change-count");
+    if (!(count instanceof HTMLElement)) return;
+    const defaults = defaultRecipeIdSet();
+    const selectable = selectableRecipeIdSet();
+    let changedCount = 0;
+    selectable.forEach((recipeId) => {
+      if (defaults.has(recipeId) !== selectedRecipeIds.has(recipeId)) changedCount += 1;
+    });
+    count.replaceChildren();
+    count.hidden = changedCount === 0;
+    if (changedCount > 0) {
+      count.append(" (");
+      const number = document.createElement("span");
+      number.className = "recipe-filter-change-number";
+      number.textContent = formatInteger(changedCount);
+      count.append(number, ")");
+    }
+    recipeFilterButton.setAttribute(
+      "aria-label",
+      changedCount > 0 ? `${t("recipes.short")} (${formatInteger(changedCount)})` : t("recipes.short"),
+    );
   }
 
   function defaultRecipeIdSet() {
@@ -1250,6 +1282,7 @@
   }
 
   function renderGraphView(result, options = {}) {
+    exitCompactFocusView();
     const graph = buildFlowGraph(result);
     lastRenderedGraph = graph;
     if (!graph.nodes.length) {
@@ -2580,8 +2613,10 @@
     });
 
     viewport.appendChild(canvas);
-    bindGraphSelectionClear(viewport, graph);
-    bindGraphPan(viewport);
+    if (!graph.isCompactFocus) {
+      bindGraphSelectionClear(viewport, graph);
+      bindGraphPan(viewport);
+    }
     applyGraphSelection(graph, selectedGraphRecipeId);
     return viewport;
   }
@@ -2682,7 +2717,7 @@
   function renderGraphNode(node, graph) {
     const switchRecipe = graphNodeSwitchRecipe(node);
     const hasRecipeFilterShortcut = node.type === "recipe";
-    const hasSwitchButton = hasRecipeFilterShortcut || canSwitchRecipe(switchRecipe);
+    const hasSwitchButton = !graph.isCompactFocus && (hasRecipeFilterShortcut || canSwitchRecipe(switchRecipe));
     const recipeMaterial = hasRecipeFilterShortcut
       ? ((node.recipe?.currentOutputs || [])[0]?.item || node.recipe?.primaryOutput)
       : switchRecipe?.primaryOutput;
@@ -2697,7 +2732,11 @@
         return;
       }
       event.stopPropagation();
-      selectGraphNode(graph, node.id);
+      if (typeof graph.onCompactNodeSelected === "function") {
+        graph.onCompactNodeSelected(node, event);
+      } else {
+        selectGraphNode(graph, node.id);
+      }
     });
     if (node.type === "recipe") {
       card.classList.add("draggable");
@@ -2733,6 +2772,26 @@
       card.appendChild(switchButton);
     }
 
+    if (node.type === "recipe" && !graph.isCompactFocus) {
+      const focusButton = document.createElement("button");
+      focusButton.type = "button";
+      focusButton.className = "compact-focus-entry";
+      focusButton.hidden = true;
+      focusButton.title = t("results.compactFocus");
+      focusButton.setAttribute("aria-label", t("results.compactFocus"));
+      focusButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3.75h8.2L19.5 8v10.25A2.75 2.75 0 0 1 16.75 21h-9.5A2.75 2.75 0 0 1 4.5 18.25v-11A3.5 3.5 0 0 1 8 3.75"/><path d="M8.25 8.5h7.5M8.25 12h7.5M8.25 15.5h3.25M2.5 9h2M2.5 14h2m15-5h2m-2 5h2M9 1.5v2.25m6-2.25v2.25m-6 17.25V21m6 0v1.5"/><circle cx="16.25" cy="15.5" r="1"/></svg>';
+      focusButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (graph.isCompactFocus) {
+          exitCompactFocusView(true);
+        } else {
+          enterCompactFocusView(graph, node.id);
+        }
+      });
+      card.appendChild(focusButton);
+      node.focusButton = focusButton;
+    }
+
     if (graphNodeHasCheck(node)) {
       const checkLabel = document.createElement("label");
       checkLabel.className = "graph-check-control";
@@ -2744,6 +2803,16 @@
       checkInput.type = "checkbox";
       checkInput.className = "graph-check-input";
       checkInput.setAttribute("aria-label", `Mark ${node.title || graphNodeCheckLabel(node)} as checked`);
+      const sourceCheckInput = node.sourceElement?.querySelector(".graph-check-input");
+      checkInput.checked = sourceCheckInput instanceof HTMLInputElement ? sourceCheckInput.checked : false;
+      if (graph.isCompactFocus) {
+        checkInput.addEventListener("change", () => {
+          const originalCheckInput = node.sourceElement?.querySelector(".graph-check-input");
+          if (originalCheckInput instanceof HTMLInputElement) {
+            originalCheckInput.checked = checkInput.checked;
+          }
+        });
+      }
       checkLabel.appendChild(checkInput);
       card.appendChild(checkLabel);
     }
@@ -2825,6 +2894,169 @@
     card.appendChild(content);
 
     return card;
+  }
+
+  function enterCompactFocusView(graph, nodeId) {
+    const node = graph?.nodeById?.get(nodeId);
+    const viewport = compactFocusViewport || treeView.querySelector(".graph-viewport:not(.compact-focus-graph-viewport)");
+    if (!node || node.type !== "recipe" || !(viewport instanceof HTMLElement)) return;
+
+    compactFocusView?.remove();
+    compactFocusViewport = viewport;
+    viewport.hidden = true;
+    compactFocusView = renderCompactFocusView(graph, nodeId);
+    treeView.appendChild(compactFocusView);
+    window.requestAnimationFrame(() => {
+      if (compactFocusView?.isConnected) layoutGraphEdgeLabels(compactFocusView.graph);
+    });
+  }
+
+  function exitCompactFocusView(centerSelection = false) {
+    if (!compactFocusView) return;
+    compactFocusView.remove();
+    compactFocusView = null;
+    if (compactFocusViewport?.isConnected) {
+      const viewport = compactFocusViewport;
+      viewport.hidden = false;
+      window.requestAnimationFrame(() => {
+        fitGraphViewportHeight(viewport);
+        if (lastRenderedGraph?.canvas?.isConnected) {
+          layoutGraphEdgeLabels(lastRenderedGraph);
+          const node = centerSelection ? lastRenderedGraph.nodeById.get(selectedGraphRecipeId) : null;
+          if (node) {
+            viewport.scrollTo({
+              left: Math.max(0, node.x + node.width / 2 - viewport.clientWidth / 2),
+              top: Math.max(0, node.y + node.height / 2 - viewport.clientHeight / 2),
+              behavior: "smooth",
+            });
+          }
+        }
+      });
+    }
+    compactFocusViewport = null;
+  }
+
+  function renderCompactFocusView(graph, nodeId) {
+    const focusedNode = graph.nodeById.get(nodeId);
+    const upstreamEdges = graph.edges.filter((edge) => edge.target === nodeId);
+    const downstreamEdges = graph.edges.filter((edge) => edge.source === nodeId);
+    const { upstreamNodes, downstreamNodes } = compactFocusNeighbors(graph, nodeId, upstreamEdges, downstreamEdges);
+    const root = document.createElement("section");
+    root.className = "compact-focus-view";
+    root.setAttribute("aria-label", t("results.compactFocus"));
+    root.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".graph-node, .graph-edge-label, button, input, select, textarea, a")) return;
+      exitCompactFocusView(true);
+    });
+
+    const compactGraph = createCompactFocusGraph(graph, nodeId, upstreamNodes, downstreamNodes);
+    root.graph = compactGraph;
+    const graphViewport = renderFlowGraph(compactGraph);
+    graphViewport.classList.add("compact-focus-graph-viewport");
+    root.appendChild(graphViewport);
+    graphViewport.scrollLeft = Math.max(0, compactGraph.focusCenterX - graphViewport.clientWidth / 2);
+
+    const hint = document.createElement("p");
+    hint.className = "compact-focus-exit-hint";
+    hint.textContent = t("results.compactExitHint");
+    root.appendChild(hint);
+    return root;
+  }
+
+  function compactFocusNeighbors(graph, focusedNodeId, upstreamEdges, downstreamEdges) {
+    const upstreamById = new Map();
+    const downstreamById = new Map();
+    upstreamEdges.forEach((edge) => {
+      const node = graph.nodeById.get(edge.source);
+      if (node && node.id !== focusedNodeId) upstreamById.set(node.id, node);
+    });
+    downstreamEdges.forEach((edge) => {
+      const node = graph.nodeById.get(edge.target);
+      if (node && node.id !== focusedNodeId) downstreamById.set(node.id, node);
+    });
+
+    const focusedNode = graph.nodeById.get(focusedNodeId);
+    upstreamById.forEach((node, id) => {
+      if (!downstreamById.has(id)) return;
+      if (Number(node.x) > Number(focusedNode?.x)) {
+        upstreamById.delete(id);
+      } else {
+        downstreamById.delete(id);
+      }
+    });
+    const sortBySourcePosition = (left, right) => left.y - right.y || left.x - right.x;
+    return {
+      upstreamNodes: Array.from(upstreamById.values()).sort(sortBySourcePosition),
+      downstreamNodes: Array.from(downstreamById.values()).sort(sortBySourcePosition),
+    };
+  }
+
+  function createCompactFocusGraph(sourceGraph, nodeId, upstreamNodes, downstreamNodes) {
+    const focused = sourceGraph.nodeById.get(nodeId);
+    const viewportWidth = Math.max(320, window.innerWidth);
+    const viewportHeight = Math.max(360, window.innerHeight);
+    const sideGap = 285;
+    let centerX = viewportWidth / 2 - focused.width / 2;
+    const leftWidth = Math.max(focused.width, ...upstreamNodes.map((node) => node.width));
+    const rightWidth = Math.max(focused.width, ...downstreamNodes.map((node) => node.width));
+    let leftX = centerX - sideGap - leftWidth;
+    let rightX = centerX + focused.width + sideGap;
+    const horizontalShift = Math.max(0, 32 - leftX);
+    centerX += horizontalShift;
+    leftX += horizontalShift;
+    rightX += horizontalShift;
+    const verticalGap = 42;
+    const stackHeight = (nodes) => nodes.reduce((sum, node) => sum + node.height, 0)
+      + Math.max(0, nodes.length - 1) * verticalGap;
+    const leftHeight = stackHeight(upstreamNodes);
+    const rightHeight = stackHeight(downstreamNodes);
+    const graphHeight = Math.max(viewportHeight, leftHeight + 100, rightHeight + 100, focused.height + 100);
+    const centerY = (viewportHeight - focused.height) / 2;
+    const placeStack = (nodes, x, width, totalHeight) => {
+      let y = Math.max(64, (viewportHeight - totalHeight) / 2);
+      if (totalHeight > viewportHeight - 96) y = 64;
+      return nodes.map((node) => {
+        const copy = { ...node, x: x + width - node.width, y, element: null, focusButton: null };
+        y += node.height + verticalGap;
+        return copy;
+      });
+    };
+    const focusCopy = { ...focused, x: centerX, y: centerY, column: 1, element: null, focusButton: null };
+    const leftCopies = placeStack(upstreamNodes, leftX, leftWidth, leftHeight).map((node) => ({ ...node, column: 0 }));
+    const rightCopies = placeStack(downstreamNodes, rightX, rightWidth, rightHeight)
+      .map((node) => ({ ...node, x: rightX, column: 2 }));
+    const nodes = [...leftCopies, focusCopy, ...rightCopies].map((node) => ({
+      ...node,
+      sourceElement: sourceGraph.nodeById.get(node.id)?.element || null,
+    }));
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const edges = sourceGraph.edges
+      .filter((edge) => (edge.source === nodeId && nodeById.has(edge.target)) || (edge.target === nodeId && nodeById.has(edge.source)))
+      .map((edge) => ({ ...edge, pathElement: null, labelElement: null }));
+    const width = Math.max(viewportWidth, rightX + rightWidth + 32);
+    const busRoutes = routeEdges(edges, nodeById, { columnGap: sideGap, nodeWidth: Math.max(leftWidth, focused.width, rightWidth) });
+    const compactGraph = {
+      nodes,
+      nodeById,
+      edges,
+      width,
+      height: graphHeight,
+      busRoutes,
+      columnGap: sideGap,
+      selectedNodeId: nodeId,
+      isCompactFocus: true,
+      sourceGraph,
+      focusCenterX: centerX + focused.width / 2,
+      onCompactNodeSelected(node) {
+        if (node.type !== "recipe" || node.id === nodeId) return;
+        selectedGraphHighlightDepth = 1;
+        selectedGraphRecipeId = node.id;
+        applyGraphSelection(sourceGraph, node.id);
+        enterCompactFocusView(sourceGraph, node.id);
+      },
+    };
+    return compactGraph;
   }
 
   function clearRecipeCardChecks() {
@@ -2960,6 +3192,9 @@
       node.element?.classList.toggle("highlight-upstream", isUpstream);
       node.element?.classList.toggle("highlight-downstream", isDownstream);
       node.element?.classList.toggle("dimmed", hasSelection && !isHighlighted);
+      if (node.focusButton) {
+        node.focusButton.hidden = !(isSelected && node.type === "recipe");
+      }
     });
 
     if (!hasSelection) {
@@ -4443,6 +4678,10 @@
   }
 
   function selectTab(tabName) {
+    if (tabName !== "tree") exitCompactFocusView();
+    if (tabName !== "tree" && resultFocusMode) {
+      closeResultFocusMode();
+    }
     activeTab = tabName;
     const showTree = tabName === "tree";
     treeView.classList.toggle("hidden", !showTree);
@@ -4452,8 +4691,83 @@
       button.classList.toggle("active", selected);
       button.setAttribute("aria-selected", String(selected));
     });
+    updateFocusControls();
     if (showTree) {
       fitCurrentGraphViewportHeight();
+    }
+  }
+
+  function setResultFocusMode(mode) {
+    resultFocusMode = mode;
+    document.body.classList.toggle("result-focus-mode", Boolean(mode));
+    updateFocusControls();
+    window.requestAnimationFrame(fitCurrentGraphViewportHeight);
+  }
+
+  function updateFocusControls() {
+    if (!resultFocusControls) return;
+    resultFocusControls.hidden = activeTab !== "tree";
+    if (pageFocusButton) {
+      pageFocusButton.hidden = resultFocusMode === "page";
+      const key = resultFocusMode === "browser" ? "focus.switchToPage" : "focus.enterPage";
+      const label = t(key);
+      pageFocusButton.setAttribute("aria-label", label);
+      pageFocusButton.title = label;
+    }
+    if (browserFocusButton) {
+      browserFocusButton.hidden = resultFocusMode === "browser";
+      const label = t("focus.enterBrowser");
+      browserFocusButton.setAttribute("aria-label", label);
+      browserFocusButton.title = label;
+    }
+    if (exitFocusButton) {
+      exitFocusButton.hidden = !resultFocusMode;
+      const label = t("focus.exit");
+      exitFocusButton.setAttribute("aria-label", label);
+      exitFocusButton.title = label;
+    }
+  }
+
+  function switchToPageFocusMode() {
+    const wasBrowserFullscreen = resultFocusMode === "browser" && Boolean(document.fullscreenElement);
+    setResultFocusMode("page");
+    if (wasBrowserFullscreen) {
+      document.exitFullscreen?.().catch(() => undefined);
+    }
+  }
+
+  async function enterBrowserFullscreen() {
+    if (!document.fullscreenEnabled || typeof document.documentElement.requestFullscreen !== "function") {
+      setResultFocusMode("page");
+      return;
+    }
+    setResultFocusMode("browser");
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch (error) {
+      if (resultFocusMode === "browser") {
+        setResultFocusMode("page");
+      }
+    }
+  }
+
+  function closeResultFocusMode() {
+    const wasBrowserFullscreen = Boolean(document.fullscreenElement);
+    setResultFocusMode(null);
+    if (wasBrowserFullscreen) {
+      document.exitFullscreen?.().catch(() => undefined);
+    }
+  }
+
+  function handleFullscreenChange() {
+    if (!document.fullscreenElement && resultFocusMode === "browser") {
+      setResultFocusMode(null);
+    }
+  }
+
+  function handleFocusModeKeydown(event) {
+    if (event.key === "Escape" && resultFocusMode === "page") {
+      closeResultFocusMode();
     }
   }
 

@@ -3,6 +3,7 @@
 
   const DEFAULT_LOCALE = "en-US";
   const STORAGE_KEY = "satisfactoryProductionPlanner.locale.v1";
+  const UI_ASSET_VERSION = "planner-compact-focus-20260928-7";
   const LOCALES = Object.freeze({
     "en-US": "English", "fr-FR": "Français", "it-IT": "Italiano", "de-DE": "Deutsch",
     "es-ES": "Español", "ja-JP": "日本語", "ko-KR": "한국어", "pl-PL": "Polski",
@@ -46,7 +47,9 @@
   }
 
   function assetUrl(locale, kind) {
-    return config.localizationAssets?.[locale]?.[kind] || `i18n/${kind}.${locale}.json`;
+    const url = config.localizationAssets?.[locale]?.[kind] || `i18n/${kind}.${locale}.json`;
+    if (kind !== "ui") return url;
+    return `${url}${url.includes("?") ? "&" : "?"}v=${UI_ASSET_VERSION}`;
   }
 
   async function loadJson(url) {
@@ -110,6 +113,17 @@
     select.add(auto);
     Object.entries(LOCALES).forEach(([locale, label]) => select.add(new Option(label, locale)));
     select.value = selection.preference === "auto" ? "auto" : selection.locale;
+    const detectedLanguage = document.getElementById("languageAutoDetected");
+    const languageSelectWrap = document.getElementById("languageSelectWrap");
+    if (detectedLanguage instanceof HTMLElement) {
+      const isAuto = select.value === "auto";
+      detectedLanguage.textContent = isAuto
+        ? `${t("language.auto")} (${LOCALES[selection.locale] || selection.locale})`
+        : "";
+      detectedLanguage.hidden = !isAuto;
+      select.classList.toggle("is-auto-selected", isAuto);
+      languageSelectWrap?.classList.toggle("is-auto", isAuto);
+    }
     select.addEventListener("change", () => {
       safeStorageSet(STORAGE_KEY, select.value);
       const url = new URL(window.location.href);

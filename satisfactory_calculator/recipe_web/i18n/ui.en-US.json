@@ -12,6 +12,7 @@
   "calculating.message": "Please wait while the production plan is calculated.",
   "language.label": "Language",
   "language.auto": "Auto",
+  "info.title": "Plan Information",
   "targets.title": "Production Targets",
   "targets.saved": "Saved Plans",
   "targets.history": "Recent History",
@@ -29,6 +30,7 @@
   "targets.rate": "Rate per Minute",
   "targets.remove": "Remove item",
   "recipes.filter": "Recipe Filter",
+  "recipes.short": "Recipes",
   "recipes.required": "Required Recipes",
   "recipes.chooseMaterial": "Choose Material",
   "recipes.chooseSearchMaterial": "Choose Material for Recipe Search",
@@ -116,5 +118,14 @@
   "table.unit": "Unit",
   "table.type": "Type",
   "table.recipes": "Recipes Used",
-  "privacy.link": "Privacy"
+  "privacy.link": "Privacy",
+  "focus.enterPage": "Expand result view",
+  "focus.enterBrowser": "Browser full screen",
+  "focus.switchToPage": "Switch to page full screen",
+  "focus.exit": "Close full-screen view",
+  "results.compactFocus": "Focus on this recipe",
+  "results.compactExitHint": "Click empty space to return",
+  "results.compactUpstream": "Upstream",
+  "results.compactCurrent": "Focused recipe",
+  "results.compactDownstream": "Downstream"
 }

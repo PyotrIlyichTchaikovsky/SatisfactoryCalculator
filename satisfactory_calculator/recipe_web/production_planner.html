@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Plan Satisfactory production targets, recipes, raw inputs, and factory flow with an interactive production graph.">
   <title>Satisfactory Production Planner</title>
-  <link rel="stylesheet" href="production_planner.css?v=graph-label-layout-20260928-2">
+  <link rel="stylesheet" href="production_planner.css?v=planner-compact-focus-20260928-7">
   <script defer src="planner_config.js?v=cloud-deploy-20260624-1"></script>
   <script defer src="planner_analytics.js"></script>
-  <script defer src="planner_i18n.js"></script>
+  <script defer src="planner_i18n.js?v=planner-compact-focus-20260928-7"></script>
   <script defer src="planner_diagnostics.js"></script>
   <script defer src="material_picker.js"></script>
-  <script defer src="production_planner.js?v=graph-row-sort-20260928-3"></script>
+  <script defer src="production_planner.js?v=planner-compact-focus-20260928-7"></script>
 </head>
 <body class="is-loading">
   <div id="initialLoading" class="initial-loading" role="status" aria-live="polite" aria-atomic="true" aria-busy="true">
@@ -36,35 +36,33 @@
     <div>
       <h1 data-i18n="app.title">Satisfactory Production Planner</h1>
       <p id="monitoringTestStatus" role="status" hidden></p>
-      <p id="dataSummary" data-i18n="app.connecting">Connecting to production planner service...</p>
     </div>
     <label class="language-field" for="languageSelect">
       <span data-i18n="language.label">Language</span>
-      <select id="languageSelect" aria-label="Language" data-i18n-aria-label="language.label">
-        <option value="auto">Auto</option>
-      </select>
+      <span id="languageSelectWrap" class="language-select-wrap">
+        <select id="languageSelect" aria-label="Language" data-i18n-aria-label="language.label">
+          <option value="auto">Auto</option>
+        </select>
+        <span id="languageAutoDetected" class="language-auto-detected" aria-hidden="true" hidden></span>
+      </span>
     </label>
   </header>
 
   <main class="app-shell">
-    <section class="input-panel" aria-labelledby="targetHeading">
+    <div class="left-column">
+      <section class="input-panel" aria-labelledby="targetHeading">
       <div class="panel-title-row">
         <h2 id="targetHeading" data-i18n="targets.title">Production Targets</h2>
-        <div class="panel-actions">
-          <button id="recipeFilterButton" class="secondary-button" type="button" disabled data-i18n="recipes.filter">Recipe Filter</button>
-        </div>
       </div>
 
       <div class="plan-library" aria-label="Saved and recent target plans">
         <div class="plan-select-field">
-          <span data-i18n="targets.saved">Saved Plans</span>
           <div id="savedPlanSelect" class="plan-picker">
             <button class="plan-picker-button" type="button" disabled data-i18n="targets.noSaved">No saved plans</button>
             <div class="plan-picker-menu" role="listbox" hidden></div>
           </div>
         </div>
         <div class="plan-select-field">
-          <span data-i18n="targets.history">Recent History</span>
           <div id="historyPlanSelect" class="plan-picker">
             <button class="plan-picker-button" type="button" disabled data-i18n="targets.noHistory">No recent history</button>
             <div class="plan-picker-menu" role="listbox" hidden></div>
@@ -77,10 +75,18 @@
         <div class="form-actions">
           <button id="addTargetButton" class="secondary-button add-target-button" type="button" title="Add item" aria-label="Add item" data-i18n-title="targets.add" data-i18n-aria-label="targets.add">+</button>
           <button id="savePlanButton" class="secondary-button" type="button" data-i18n="targets.save">Save</button>
+          <button id="recipeFilterButton" class="secondary-button recipe-filter-button" type="button" disabled aria-label="Recipes" data-i18n-aria-label="recipes.short"><span data-i18n="recipes.short">Recipes</span><span class="recipe-filter-change-count" hidden></span></button>
           <button id="calculateButton" class="primary-button" type="submit" disabled data-i18n="targets.calculate">Calculate</button>
         </div>
       </form>
-    </section>
+      </section>
+
+      <section class="info-panel" aria-labelledby="infoHeading">
+        <h2 id="infoHeading" data-i18n="info.title">Plan Information</h2>
+        <p id="dataSummary" class="data-summary" data-i18n="app.connecting">Connecting to production planner service...</p>
+        <div id="statusMessage" class="status-message" data-i18n="results.initial">Select one or more items and enter the required production rate per minute.</div>
+      </section>
+    </div>
 
     <section class="result-panel" aria-labelledby="resultHeading">
       <div class="result-toolbar">
@@ -93,10 +99,20 @@
             <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true" data-i18n="results.planView">Plan View</button>
             <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false" data-i18n="results.tableView">Merged Table</button>
           </div>
+          <div id="resultFocusControls" class="result-focus-controls">
+            <button id="pageFocusButton" class="secondary-button focus-mode-button" type="button" title="Expand result view" aria-label="Expand result view" data-i18n-title="focus.enterPage" data-i18n-aria-label="focus.enterPage">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect><path d="M9 4v16M14 9l-2 3 2 3"></path></svg>
+            </button>
+            <button id="browserFocusButton" class="secondary-button focus-mode-button" type="button" title="Browser full screen" aria-label="Browser full screen" data-i18n-title="focus.enterBrowser" data-i18n-aria-label="focus.enterBrowser">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 3.5H4.5V7M16 3.5h3.5V7M8 20.5H4.5V17M16 20.5h3.5V17"></path></svg>
+            </button>
+            <button id="exitFocusButton" class="secondary-button focus-mode-button" type="button" title="Close full-screen view" aria-label="Close full-screen view" data-i18n-title="focus.exit" data-i18n-aria-label="focus.exit" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 3.5v4.5H3.5M16 3.5v4.5h4.5M8 20.5V16H3.5M16 20.5V16h4.5"></path></svg>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div id="statusMessage" class="status-message" data-i18n="results.initial">Select one or more items and enter the required production rate per minute.</div>
       <div id="treeView" class="view-panel"></div>
       <div id="tableView" class="view-panel hidden"></div>
     </section>

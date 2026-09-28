@@ -1,6 +1,7 @@
 {
   "language.label": "Lingua",
   "language.auto": "Auto",
+  "info.title": "Informazioni sul piano",
   "targets.title": "Obiettivi di produzione",
   "targets.saved": "Piani salvati",
   "targets.history": "Cronologia recente",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Scegli un oggetto",
   "targets.rate": "Quantità al minuto",
   "recipes.filter": "Filtro ricette",
+  "recipes.short": "Ricette",
   "recipes.chooseMaterial": "Scegli materiale",
   "recipes.clearMaterial": "Rimuovi materiale",
   "recipes.resetAll": "Ripristina tutto",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Impossibile caricare il pianificatore",
   "loading.failed": "Controlla la connessione e riprova.",
   "loading.retry": "Riprova",
-  "privacy.link": "Privacy"
+  "privacy.link": "Privacy",
+  "focus.enterPage": "Espandi la vista dei risultati",
+  "focus.enterBrowser": "Schermo intero del browser",
+  "focus.switchToPage": "Passa allo schermo intero della pagina",
+  "focus.exit": "Chiudi la visualizzazione a schermo intero",
+  "results.compactFocus": "Metti a fuoco questa ricetta",
+  "results.compactExitHint": "Fai clic su uno spazio vuoto per tornare",
+  "results.compactUpstream": "A monte",
+  "results.compactCurrent": "Ricetta evidenziata",
+  "results.compactDownstream": "A valle"
 }

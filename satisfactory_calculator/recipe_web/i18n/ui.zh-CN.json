@@ -1,6 +1,7 @@
 {
   "language.label": "语言",
   "language.auto": "自动",
+  "info.title": "方案说明",
   "targets.title": "生产目标",
   "targets.saved": "已保存方案",
   "targets.history": "最近记录",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "选择材料",
   "targets.rate": "每分钟产量",
   "recipes.filter": "配方筛选",
+  "recipes.short": "配方",
   "recipes.chooseMaterial": "选择材料",
   "recipes.clearMaterial": "清除材料",
   "recipes.resetAll": "全部重置",
@@ -115,5 +117,14 @@
   "table.unit": "单位",
   "table.type": "类型",
   "table.recipes": "使用的配方",
-  "privacy.link": "隐私"
+  "privacy.link": "隐私",
+  "focus.enterPage": "展开结果视图",
+  "focus.enterBrowser": "浏览器全屏",
+  "focus.switchToPage": "切换到页面全屏",
+  "focus.exit": "关闭全屏视图",
+  "results.compactFocus": "聚焦此配方",
+  "results.compactExitHint": "点击空白处返回",
+  "results.compactUpstream": "上游配方",
+  "results.compactCurrent": "关注配方",
+  "results.compactDownstream": "下游配方"
 }

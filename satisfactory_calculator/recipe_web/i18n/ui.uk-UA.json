@@ -1,6 +1,7 @@
 {
   "language.label": "Мова",
   "language.auto": "Авто",
+  "info.title": "Відомості про план",
   "targets.title": "Цілі виробництва",
   "targets.saved": "Збережені плани",
   "targets.history": "Недавня історія",
@@ -11,6 +12,7 @@
   "targets.chooseItem": "Вибрати предмет",
   "targets.rate": "Кількість за хвилину",
   "recipes.filter": "Фільтр рецептів",
+  "recipes.short": "Рецепти",
   "recipes.chooseMaterial": "Вибрати матеріал",
   "recipes.clearMaterial": "Очистити матеріал",
   "recipes.resetAll": "Скинути все",
@@ -34,5 +36,14 @@
   "loading.failedTitle": "Не вдалося завантажити планувальник",
   "loading.failed": "Перевірте з’єднання та спробуйте ще раз.",
   "loading.retry": "Спробувати ще раз",
-  "privacy.link": "Конфіденційність"
+  "privacy.link": "Конфіденційність",
+  "focus.enterPage": "Розгорнути результати",
+  "focus.enterBrowser": "Повноекранний режим браузера",
+  "focus.switchToPage": "Перемкнутися на повноекранний режим сторінки",
+  "focus.exit": "Закрити повноекранний режим",
+  "results.compactFocus": "Зосередитися на цьому рецепті",
+  "results.compactExitHint": "Натисніть порожнє місце, щоб повернутися",
+  "results.compactUpstream": "Попередні рецепти",
+  "results.compactCurrent": "Рецепт у фокусі",
+  "results.compactDownstream": "Наступні рецепти"
 }
