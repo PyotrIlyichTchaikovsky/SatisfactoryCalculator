@@ -2901,13 +2901,92 @@
     const viewport = compactFocusViewport || treeView.querySelector(".graph-viewport:not(.compact-focus-graph-viewport)");
     if (!node || node.type !== "recipe" || !(viewport instanceof HTMLElement)) return;
 
+    const previousFocusRoot = compactFocusView;
+    const previousGraph = previousFocusRoot?.graph;
+    const previousRects = new Map((previousGraph?.nodes || []).map((previousNode) => [
+      previousNode.id,
+      previousNode.element?.getBoundingClientRect?.() || null,
+    ]));
     compactFocusView?.remove();
     compactFocusViewport = viewport;
-    viewport.hidden = true;
     compactFocusView = renderCompactFocusView(graph, nodeId);
+    const focusRoot = compactFocusView;
+    const focusGraph = focusRoot.graph;
+    const sourceRects = new Map(focusGraph.nodes.map((focusNode) => {
+      const previousRect = previousRects.get(focusNode.id);
+      const sourceNode = graph.nodeById.get(focusNode.id);
+      const sourceRect = previousRect?.width
+        ? previousRect
+        : sourceNode?.element?.getBoundingClientRect?.() || null;
+      return [focusNode.id, sourceRect];
+    }));
+    prepareCompactFocusEntry(focusGraph);
     treeView.appendChild(compactFocusView);
+    viewport.hidden = true;
+    const focusViewport = focusRoot.querySelector(".compact-focus-graph-viewport");
+    if (focusViewport instanceof HTMLElement) {
+      focusViewport.scrollLeft = Math.max(0, focusGraph.focusCenterX - focusViewport.clientWidth / 2);
+    }
     window.requestAnimationFrame(() => {
-      if (compactFocusView?.isConnected) layoutGraphEdgeLabels(compactFocusView.graph);
+      if (compactFocusView !== focusRoot || !focusRoot.isConnected) return;
+      layoutGraphEdgeLabels(focusGraph);
+      playCompactFocusEntry(focusRoot, sourceRects);
+    });
+  }
+
+  function prepareCompactFocusEntry(graph) {
+    graph.svg.style.opacity = "0";
+    graph.highlightSvg.style.opacity = "0";
+    graph.edges.forEach((edge) => {
+      if (edge.labelElement) edge.labelElement.style.opacity = "0";
+    });
+  }
+
+  function playCompactFocusEntry(root, sourceRects) {
+    const graph = root.graph;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const animations = [];
+    if (!reduceMotion && typeof Element.prototype.animate === "function") {
+      const viewport = root.querySelector(".compact-focus-graph-viewport");
+      const viewportRect = viewport?.getBoundingClientRect?.();
+      graph.nodes.forEach((node) => {
+        const targetRect = node.element?.getBoundingClientRect();
+        if (!targetRect?.width) return;
+        let sourceRect = sourceRects.get(node.id);
+        if (!sourceRect?.width && viewportRect) {
+          const entersFromLeft = node.column < 1;
+          sourceRect = {
+            left: entersFromLeft ? viewportRect.left - targetRect.width - 48 : viewportRect.right + 48,
+            top: targetRect.top,
+            width: targetRect.width,
+            height: targetRect.height,
+          };
+        }
+        if (!sourceRect?.width) return;
+        const offsetX = sourceRect.left - targetRect.left;
+        const offsetY = sourceRect.top - targetRect.top;
+        if (Math.abs(offsetX) < 1 && Math.abs(offsetY) < 1) return;
+        animations.push(node.element.animate([
+          { transform: `translate3d(${offsetX}px, ${offsetY}px, 0)` },
+          { transform: "translate3d(0, 0, 0)" },
+        ], {
+          duration: 680,
+          easing: "cubic-bezier(0.2, 0.72, 0.25, 1)",
+        }));
+      });
+    }
+
+    Promise.all(animations.map((animation) => animation.finished.catch(() => undefined))).then(() => {
+      if (compactFocusView !== root || !root.isConnected) return;
+      [graph.svg, graph.highlightSvg].forEach((svg) => {
+        svg.style.transition = reduceMotion ? "none" : "opacity 240ms ease-out";
+        svg.style.opacity = "1";
+      });
+      graph.edges.forEach((edge) => {
+        if (!edge.labelElement) return;
+        edge.labelElement.style.transition = reduceMotion ? "none" : "opacity 240ms ease-out";
+        edge.labelElement.style.opacity = "1";
+      });
     });
   }
 
@@ -2938,9 +3017,7 @@
 
   function renderCompactFocusView(graph, nodeId) {
     const focusedNode = graph.nodeById.get(nodeId);
-    const upstreamEdges = graph.edges.filter((edge) => edge.target === nodeId);
-    const downstreamEdges = graph.edges.filter((edge) => edge.source === nodeId);
-    const { upstreamNodes, downstreamNodes } = compactFocusNeighbors(graph, nodeId, upstreamEdges, downstreamEdges);
+    const { leftNodes, rightNodes } = compactFocusNeighbors(graph, nodeId);
     const root = document.createElement("section");
     root.className = "compact-focus-view";
     root.setAttribute("aria-label", t("results.compactFocus"));
@@ -2950,12 +3027,11 @@
       exitCompactFocusView(true);
     });
 
-    const compactGraph = createCompactFocusGraph(graph, nodeId, upstreamNodes, downstreamNodes);
+    const compactGraph = createCompactFocusGraph(graph, nodeId, leftNodes, rightNodes);
     root.graph = compactGraph;
     const graphViewport = renderFlowGraph(compactGraph);
     graphViewport.classList.add("compact-focus-graph-viewport");
     root.appendChild(graphViewport);
-    graphViewport.scrollLeft = Math.max(0, compactGraph.focusCenterX - graphViewport.clientWidth / 2);
 
     const hint = document.createElement("p");
     hint.className = "compact-focus-exit-hint";
@@ -2964,31 +3040,33 @@
     return root;
   }
 
-  function compactFocusNeighbors(graph, focusedNodeId, upstreamEdges, downstreamEdges) {
-    const upstreamById = new Map();
-    const downstreamById = new Map();
-    upstreamEdges.forEach((edge) => {
-      const node = graph.nodeById.get(edge.source);
-      if (node && node.id !== focusedNodeId) upstreamById.set(node.id, node);
-    });
-    downstreamEdges.forEach((edge) => {
-      const node = graph.nodeById.get(edge.target);
-      if (node && node.id !== focusedNodeId) downstreamById.set(node.id, node);
-    });
-
+  function compactFocusNeighbors(graph, focusedNodeId) {
     const focusedNode = graph.nodeById.get(focusedNodeId);
-    upstreamById.forEach((node, id) => {
-      if (!downstreamById.has(id)) return;
-      if (Number(node.x) > Number(focusedNode?.x)) {
-        upstreamById.delete(id);
-      } else {
-        downstreamById.delete(id);
-      }
+    const focusedCenterX = Number(focusedNode?.x || 0) + Number(focusedNode?.width || 0) / 2;
+    const incidentById = new Map();
+    graph.edges.forEach((edge) => {
+      if (edge.source !== focusedNodeId && edge.target !== focusedNodeId) return;
+      const otherId = edge.source === focusedNodeId ? edge.target : edge.source;
+      if (otherId === focusedNodeId) return;
+      const entry = incidentById.get(otherId) || { node: graph.nodeById.get(otherId), hasIncoming: false };
+      if (edge.target === focusedNodeId) entry.hasIncoming = true;
+      incidentById.set(otherId, entry);
     });
     const sortBySourcePosition = (left, right) => left.y - right.y || left.x - right.x;
+    const leftNodes = [];
+    const rightNodes = [];
+    incidentById.forEach(({ node, hasIncoming }) => {
+      if (!node) return;
+      const nodeCenterX = Number(node.x || 0) + Number(node.width || 0) / 2;
+      if (nodeCenterX < focusedCenterX || (nodeCenterX === focusedCenterX && hasIncoming)) {
+        leftNodes.push(node);
+      } else {
+        rightNodes.push(node);
+      }
+    });
     return {
-      upstreamNodes: Array.from(upstreamById.values()).sort(sortBySourcePosition),
-      downstreamNodes: Array.from(downstreamById.values()).sort(sortBySourcePosition),
+      leftNodes: leftNodes.sort(sortBySourcePosition),
+      rightNodes: rightNodes.sort(sortBySourcePosition),
     };
   }
 
