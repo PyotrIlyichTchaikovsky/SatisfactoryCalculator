@@ -79,7 +79,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   await expect(page.locator('.item-input').first()).toHaveValue('Iron Plate');
   await expect(page.locator('.item-input-box').first()).not.toHaveClass(/invalid/);
   await expect(page.locator('.target-row').first()).toHaveAttribute('data-item-class','Desc_IronPlate_C');
-  await page.getByRole('button',{name:/^Recipe Filter/}).click();
+  await page.getByRole('button',{name:/^Recipes/}).click();
   await expect(page.getByRole('button',{name:'Selected Only',exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Show Base Recipes',exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Select All',exact:true})).toHaveCount(0);
@@ -108,7 +108,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   await expect(page.locator('#statusMessage')).toContainText('Optimized');
   await expect(page.locator('.graph-node').first()).toBeVisible();
   expect(await page.locator('#treeView svg path').count()).toBeGreaterThan(0);
-  await page.getByRole('button',{name:/^Recipe Filter/}).click();
+  await page.getByRole('button',{name:/^Recipes/}).click();
   await page.getByRole('button',{name:'Choose Material',exact:true}).click();
   await page.getByRole('button',{name:/Recently Selected/}).click();
   await page.getByRole('option',{name:'Select Iron Plate',exact:true}).click();
@@ -140,7 +140,7 @@ test('deployed page calculates, draws, saves, restores and has no manual report 
   await page.locator('.recipe-finder-row').click();
   await expect(page.locator('.recipe-finder-overlay')).toHaveCount(0);
   await expect(page.locator('.graph-node.recipe.alternate.located')).toBeVisible();
-  await page.getByRole('button',{name:/^Recipe Filter/}).click();
+  await page.getByRole('button',{name:/^Recipes/}).click();
   const groupStates=await page.locator('.recipe-material-group').evaluateAll(groups=>groups.map(group=>({
     modified:group.classList.contains('modified'),
     open:group.open,
