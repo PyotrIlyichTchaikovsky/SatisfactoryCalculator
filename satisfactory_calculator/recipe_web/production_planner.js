@@ -3018,19 +3018,16 @@
       edge.labelElement?.classList.toggle("dimmed", hasSelection && !isHighlighted);
     });
 
+    graph.highlightSvg?.querySelectorAll(".graph-bus-highlight-group").forEach((element) => element.remove());
     (graph.busRoutes || []).forEach((bus) => {
-      const isHighlighted = bus.edges.some((edge) => highlightedEdgeIds.has(edge.id));
-      if (bus.groupElement && graph.highlightSvg && graph.svg) {
-        const targetSvg = isHighlighted ? graph.highlightSvg : graph.svg;
-        if (bus.groupElement.parentNode !== targetSvg) targetSvg.appendChild(bus.groupElement);
+      const highlightedBusEdges = bus.edges.filter((edge) => highlightedEdgeIds.has(edge.id));
+      [bus.sourceElement, bus.trunkElement].filter(Boolean).forEach((element) => {
+        element.classList.remove("highlight-edge", "flowing-edge");
+        element.classList.toggle("dimmed", hasSelection);
+      });
+      if (hasSelection && highlightedBusEdges.length && graph.highlightSvg) {
+        renderGraphBusHighlight(bus, highlightedBusEdges, graph.highlightSvg);
       }
-      [bus.sourceElement, bus.trunkElement]
-        .filter(Boolean)
-        .forEach((element) => {
-          element.classList.toggle("highlight-edge", isHighlighted);
-          element.classList.toggle("flowing-edge", isHighlighted);
-          element.classList.toggle("dimmed", hasSelection && !isHighlighted);
-        });
     });
 
     if (graph.canvas?.isConnected) layoutGraphEdgeLabels(graph);
@@ -3069,6 +3066,35 @@
 
   function canExpandGraphSelection(node) {
     return node?.type === "recipe" || node?.type === "raw";
+  }
+
+  function renderGraphBusHighlight(bus, highlightedEdges, highlightSvg) {
+    const highlightedStops = highlightedEdges
+      .map((edge) => Number(edge.busDropX))
+      .filter(Number.isFinite);
+    if (!highlightedStops.length) return;
+
+    const terminalX = bus.direction === "reverse"
+      ? Math.min(...highlightedStops)
+      : Math.max(...highlightedStops);
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "graph-bus-highlight-group");
+
+    const sourcePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    sourcePath.setAttribute("class", "graph-flow bus-route highlight-edge flowing-edge");
+    sourcePath.setAttribute("d", bus.sourceCurve.path);
+    sourcePath.setAttribute("stroke", bus.color);
+    sourcePath.setAttribute("stroke-width", String(bus.width));
+    group.appendChild(sourcePath);
+
+    const trunkPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    trunkPath.setAttribute("class", "graph-flow bus-route highlight-edge flowing-edge");
+    trunkPath.setAttribute("d", `M ${bus.boardX} ${bus.y} L ${terminalX} ${bus.y}`);
+    trunkPath.setAttribute("stroke", bus.color);
+    trunkPath.setAttribute("stroke-width", String(bus.width));
+    group.appendChild(trunkPath);
+
+    highlightSvg.appendChild(group);
   }
 
   function collectGraphSelectionDirection(
