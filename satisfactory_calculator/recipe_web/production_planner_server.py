@@ -56,7 +56,9 @@ class PlannerRequestHandler(SimpleHTTPRequestHandler):
             payload = self._read_json_body()
             result = self.planner.plan(
                 payload.get("targets", []),
+                selected_recipes=payload.get("selectedRecipes"),
                 enabled_recipe_ids=payload.get("enabledRecipeIds"),
+                disabled_raw_material_classes=payload.get("disabledRawMaterialClasses"),
                 preferred_plan=payload.get("preferredPlan"),
             )
         except PlannerError as exc:
