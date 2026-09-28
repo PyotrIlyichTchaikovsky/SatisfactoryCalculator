@@ -1959,27 +1959,13 @@
       columns.get(column).sort((a, b) => graphNodeSortKey(a, balanceByClass).localeCompare(graphNodeSortKey(b, balanceByClass)));
     });
 
-    let bestOrder = snapshotColumnOrder(columns, sortedColumns);
-    let bestScore = graphLayoutOrderScore(edges, nodeById, columns);
-    for (let pass = 0; pass < 10; pass += 1) {
-      sortColumnsByNeighborScores(columns, sortedColumns, edges, nodeById, balanceByClass, "incoming");
-      let score = graphLayoutOrderScore(edges, nodeById, columns);
-      if (score < bestScore) {
-        bestScore = score;
-        bestOrder = snapshotColumnOrder(columns, sortedColumns);
-      }
-
-      sortColumnsByNeighborScores(columns, [...sortedColumns].reverse(), edges, nodeById, balanceByClass, "outgoing");
-      score = graphLayoutOrderScore(edges, nodeById, columns);
-      if (score < bestScore) {
-        bestScore = score;
-        bestOrder = snapshotColumnOrder(columns, sortedColumns);
-      }
-    }
-    restoreColumnOrder(columns, bestOrder, nodeById);
+    // Process each column once from right to left. The immediate downstream
+    // column is already in its final order, so each upstream column can align
+    // directly to it without a later global score undoing that alignment.
+    sortColumnsByNeighborScores(columns, [...sortedColumns].reverse(), edges, nodeById, balanceByClass);
   }
 
-  function sortColumnsByNeighborScores(columns, orderedColumns, edges, nodeById, balanceByClass, direction) {
+  function sortColumnsByNeighborScores(columns, orderedColumns, edges, nodeById, balanceByClass) {
     orderedColumns.forEach((column) => {
       const columnNodes = columns.get(column) || [];
       if (columnNodes.length <= 1) {
@@ -1987,10 +1973,10 @@
       }
       const rank = graphColumnRank(columns);
       columnNodes.sort((a, b) => {
-        const scoreA = neighborOrderScore(a, edges, nodeById, rank, direction);
-        const scoreB = neighborOrderScore(b, edges, nodeById, rank, direction);
-        if (scoreA.hasNeighbors !== scoreB.hasNeighbors) {
-          return scoreA.hasNeighbors ? -1 : 1;
+        const scoreA = downstreamNeighborOrderScore(a, edges, nodeById, rank);
+        const scoreB = downstreamNeighborOrderScore(b, edges, nodeById, rank);
+        if (scoreA.priority !== scoreB.priority) {
+          return scoreA.priority - scoreB.priority;
         }
         if (scoreA.value !== scoreB.value) {
           return scoreA.value - scoreB.value;
@@ -2005,35 +1991,31 @@
     });
   }
 
-  function neighborOrderScore(node, edges, nodeById, rank, direction) {
-    const neighbors = [];
+  function downstreamNeighborOrderScore(node, edges, nodeById, rank) {
+    const adjacentNeighbors = [];
+    const distantNeighbors = [];
     edges.forEach((edge) => {
-      if (direction === "incoming" && edge.target === node.id) {
-        const source = nodeById.get(edge.source);
-        if (source && source.column < node.column) {
-          neighbors.push({
-            rank: rank.get(source.id) ?? 0,
-            weight: graphLayoutEdgeWeight(edge) * (source.column === node.column - 1 ? 4 : 1),
-          });
-        }
-      } else if (direction === "outgoing" && edge.source === node.id) {
+      if (edge.source === node.id) {
         const target = nodeById.get(edge.target);
         if (target && target.column > node.column) {
-          neighbors.push({
+          const neighbor = {
             rank: rank.get(target.id) ?? 0,
-            weight: graphLayoutEdgeWeight(edge) * (target.column === node.column + 1 ? 4 : 1),
-          });
+            weight: graphLayoutEdgeWeight(edge),
+          };
+          (Number(target.column) === Number(node.column) + 1 ? adjacentNeighbors : distantNeighbors).push(neighbor);
         }
       }
     });
-    if (!neighbors.length) {
-      return { hasNeighbors: false, value: Number.POSITIVE_INFINITY };
-    }
+    // A recipe feeding the very next column always takes precedence over one
+    // that only feeds farther columns; nodes with no downstream edge come last.
+    const neighbors = adjacentNeighbors.length ? adjacentNeighbors : distantNeighbors;
+    if (!neighbors.length) return { priority: 2, value: Number.POSITIVE_INFINITY };
+    const priority = adjacentNeighbors.length ? 0 : 1;
     const totalWeight = neighbors.reduce((sum, neighbor) => sum + neighbor.weight, 0);
     const average = neighbors.reduce((sum, neighbor) => sum + neighbor.rank * neighbor.weight, 0) / totalWeight;
     const median = weightedMedianRank(neighbors, totalWeight);
     return {
-      hasNeighbors: true,
+      priority,
       value: median * 0.65 + average * 0.35,
     };
   }
@@ -2064,69 +2046,6 @@
       nodesInColumn.forEach((node, index) => rank.set(node.id, index));
     });
     return rank;
-  }
-
-  function graphLayoutOrderScore(edges, nodeById, columns) {
-    const rank = graphColumnRank(columns);
-    const forwardEdges = [];
-    let weightedDistance = 0;
-    edges.forEach((edge) => {
-      const source = nodeById.get(edge.source);
-      const target = nodeById.get(edge.target);
-      if (!source || !target || source.column >= target.column) {
-        return;
-      }
-      const sourceRank = rank.get(source.id) ?? 0;
-      const targetRank = rank.get(target.id) ?? 0;
-      const weight = graphLayoutEdgeWeight(edge);
-      const span = Math.max(1, target.column - source.column);
-      const adjacencyWeight = span === 1 ? 4 : span === 2 ? 1.7 : 1;
-      weightedDistance += weight * adjacencyWeight * Math.abs(sourceRank - targetRank) * (1 + (span - 1) * 0.08);
-      forwardEdges.push({
-        source: source.id,
-        target: target.id,
-        sourceColumn: source.column,
-        targetColumn: target.column,
-        sourceRank,
-        targetRank,
-        weight,
-      });
-    });
-
-    let crossings = 0;
-    for (let leftIndex = 0; leftIndex < forwardEdges.length; leftIndex += 1) {
-      const left = forwardEdges[leftIndex];
-      for (let rightIndex = leftIndex + 1; rightIndex < forwardEdges.length; rightIndex += 1) {
-        const right = forwardEdges[rightIndex];
-        if (
-          left.source === right.source
-          || left.target === right.target
-          || left.sourceColumn !== right.sourceColumn
-          || left.targetColumn !== right.targetColumn
-        ) {
-          continue;
-        }
-        const sourceOrder = left.sourceRank - right.sourceRank;
-        const targetOrder = left.targetRank - right.targetRank;
-        if (sourceOrder * targetOrder < 0) {
-          crossings += Math.sqrt(left.weight * right.weight);
-        }
-      }
-    }
-    return crossings * 1000 + weightedDistance;
-  }
-
-  function snapshotColumnOrder(columns, sortedColumns) {
-    return new Map(sortedColumns.map((column) => [
-      column,
-      (columns.get(column) || []).map((node) => node.id),
-    ]));
-  }
-
-  function restoreColumnOrder(columns, order, nodeById) {
-    order.forEach((nodeIds, column) => {
-      columns.set(column, nodeIds.map((nodeId) => nodeById.get(nodeId)).filter(Boolean));
-    });
   }
 
   function routeEdges(edges, nodeById, layout = {}) {
