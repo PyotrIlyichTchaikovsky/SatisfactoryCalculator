@@ -2779,7 +2779,7 @@
       focusButton.hidden = true;
       focusButton.title = t("results.compactFocus");
       focusButton.setAttribute("aria-label", t("results.compactFocus"));
-      focusButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3.75h8.2L19.5 8v10.25A2.75 2.75 0 0 1 16.75 21h-9.5A2.75 2.75 0 0 1 4.5 18.25v-11A3.5 3.5 0 0 1 8 3.75"/><path d="M8.25 8.5h7.5M8.25 12h7.5M8.25 15.5h3.25M2.5 9h2M2.5 14h2m15-5h2m-2 5h2M9 1.5v2.25m6-2.25v2.25m-6 17.25V21m6 0v1.5"/><circle cx="16.25" cy="15.5" r="1"/></svg>';
+      focusButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7.5 12h2.25m4.5 0h2.25"/><circle cx="5" cy="12" r="2.5"/><circle class="focus-center" cx="12" cy="12" r="3.5"/><circle cx="19" cy="12" r="2.5"/></svg>';
       focusButton.addEventListener("click", (event) => {
         event.stopPropagation();
         if (graph.isCompactFocus) {

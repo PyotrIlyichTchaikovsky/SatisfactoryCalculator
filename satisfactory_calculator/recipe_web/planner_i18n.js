@@ -3,7 +3,7 @@
 
   const DEFAULT_LOCALE = "en-US";
   const STORAGE_KEY = "satisfactoryProductionPlanner.locale.v1";
-  const UI_ASSET_VERSION = "planner-compact-focus-20260929-1";
+  const UI_ASSET_VERSION = "planner-compact-focus-20260929-2";
   const LOCALES = Object.freeze({
     "en-US": "English", "fr-FR": "Français", "it-IT": "Italiano", "de-DE": "Deutsch",
     "es-ES": "Español", "ja-JP": "日本語", "ko-KR": "한국어", "pl-PL": "Polski",
