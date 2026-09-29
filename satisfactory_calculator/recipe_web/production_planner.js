@@ -1850,7 +1850,7 @@
     edges.forEach((edge) => {
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
-      edge.feedback = Boolean(source && target && source.x >= target.x);
+      edge.feedback = Boolean(source && target && Number(source.column) >= Number(target.column));
       edge.pathElement?.setAttribute("class", graphEdgePathClass(edge));
     });
   }
@@ -2090,7 +2090,6 @@
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
       if (!source || !target) return;
-      const reverse = Number(target.column) < Number(source.column);
       edge.x1 = source.x + source.width;
       edge.y1 = source.y + source.height / 2 + edge.sourceOffset;
       edge.x2 = target.x;
@@ -2102,13 +2101,16 @@
       edge.busBranchGeometry = null;
       edge.busBranchLabel = null;
     });
+    // Compact focus changes node positions and columns, so copied edges must
+    // derive their direction from the current layout instead of stale metadata.
+    refreshEdgeFeedback(edges, nodeById);
 
     const busEdges = edges.filter((edge) => {
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
       if (!source || !target) return false;
       const columnSpan = Number(target.column) - Number(source.column);
-      return columnSpan < 0 || columnSpan >= 2;
+      return columnSpan <= 0 || columnSpan >= 2;
     });
     const directEdges = new Set(busEdges);
     const buses = assignGraphBusRoutes(busEdges, nodeById, layout);
@@ -2130,7 +2132,7 @@
     edges.forEach((edge) => {
       const source = nodeById.get(edge.source);
       const target = nodeById.get(edge.target);
-      const direction = Number(target?.column) < Number(source?.column) ? "reverse" : "forward";
+      const direction = graphBusEdgeDirection(source, target);
       const key = `${edge.source}\n${direction}`;
       if (!busGroups.has(key)) busGroups.set(key, []);
       busGroups.get(key).push({ edge, direction });
@@ -2362,7 +2364,7 @@
 
   function graphBusEdgeDirection(source, target) {
     const columnSpan = Number(target?.column) - Number(source?.column);
-    return columnSpan < 0 ? "reverse" : "forward";
+    return columnSpan <= 0 ? "reverse" : "forward";
   }
 
   function graphBusBranchGeometry(edge, laneY, dropX, direction) {
