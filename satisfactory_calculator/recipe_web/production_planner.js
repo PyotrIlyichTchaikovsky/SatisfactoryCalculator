@@ -1580,7 +1580,11 @@
         const { producer, consumer } = candidate;
         const rate = Math.min(producer.remaining, consumer.remaining);
 
-        if (isPositive(rate) && producer.nodeId !== consumer.nodeId) {
+        // Some recipes consume part of a material they also produce (for
+        // example, Alternate: Instant Scrap reuses its water output). Keep
+        // that allocation as a self-edge so the normal bus router can show
+        // the internal recycle flow in both graph views.
+        if (isPositive(rate)) {
           const sourceNode = nodes.get(producer.nodeId);
           edges.push({
             id: `edge:${edges.length}`,
@@ -1591,6 +1595,7 @@
             scale: graphEdgeAllocatedScale(producer, rate),
             showScale: graphEdgeShowsScale(sourceNode),
             byproduct: Boolean(producer.byproduct),
+            selfFeed: producer.nodeId === consumer.nodeId,
             color: materialColor(itemClass),
           });
         }
@@ -1856,7 +1861,7 @@
   }
 
   function graphEdgePathClass(edge) {
-    return `graph-flow${edge.feedback ? " feedback" : ""}${edge.busRouteId ? " bus-route" : ""}`;
+    return `graph-flow${edge.feedback ? " feedback" : ""}${edge.busRouteId ? " bus-route" : ""}${edge.selfFeed ? " self-feed" : ""}`;
   }
 
   function assignDependencyColumns(nodes, edges) {
