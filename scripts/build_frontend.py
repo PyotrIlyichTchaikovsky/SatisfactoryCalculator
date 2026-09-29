@@ -16,7 +16,7 @@ OUTPUT_DIR = ROOT_DIR / "dist" / "frontend"
 
 
 def application_digest() -> str:
-    files = [SOURCE_DIR / name for name in ("production_planner.html", "privacy.html", "production_planner.css", "production_planner.js", "material_picker.js", "planner_analytics.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx", "data/material_progression.json")]
+    files = [SOURCE_DIR / name for name in ("production_planner.html", "privacy.html", "privacy_i18n.js", "production_planner.css", "production_planner.js", "material_picker.js", "planner_analytics.js", "planner_diagnostics.js", "planner_i18n.js", "data/Data.xlsx", "data/material_progression.json")]
     files += sorted((SOURCE_DIR / "i18n").glob("*.json"))
     files += sorted((SOURCE_DIR / "data" / "icons").rglob("*.png"))
     digest = hashlib.sha256()
@@ -53,7 +53,8 @@ def main() -> None:
     html = render_html(SOURCE_DIR / "production_planner.html", config, asset_names)
     (output_dir / "index.html").write_text(html, encoding="utf-8")
     (output_dir / "production_planner.html").write_text(html, encoding="utf-8")
-    shutil.copyfile(SOURCE_DIR / "privacy.html", output_dir / "privacy.html")
+    privacy_html = replace_asset_references((SOURCE_DIR / "privacy.html").read_text(encoding="utf-8"), asset_names)
+    (output_dir / "privacy.html").write_text(privacy_html, encoding="utf-8")
     (output_dir / "_headers").write_text(render_headers(config), encoding="utf-8")
     is_staging = config["sentryEnvironment"] == "staging"
     (output_dir / "robots.txt").write_text("User-agent: *\nDisallow: /\n" if is_staging else render_robots(config["publicSiteUrl"]), encoding="utf-8")
@@ -76,6 +77,7 @@ def write_hashed_assets(output_dir: Path, config: dict[str, object]) -> dict[str
         "material_picker.js": (SOURCE_DIR / "material_picker.js").read_bytes(),
         "production_planner.js": (SOURCE_DIR / "production_planner.js").read_bytes(),
         "planner_i18n.js": (SOURCE_DIR / "planner_i18n.js").read_bytes(),
+        "privacy_i18n.js": (SOURCE_DIR / "privacy_i18n.js").read_bytes(),
         "planner_config.js": render_planner_config(config).encode("utf-8"),
     }
     asset_names = {}
@@ -167,7 +169,7 @@ def render_html(source_path: Path, config: dict[str, object], asset_names: dict[
     if config["releaseVersion"]:
         prefix = "Release test environment · Version" if config["sentryEnvironment"] == "staging" else "Version"
         version = escape_attr(str(config["releaseVersion"]))
-        html = html.replace('<p id="dataSummary"', f'<p id="releaseLabel">{prefix} {version}</p>\n      <p id="dataSummary"', 1)
+        html = html.replace('<p id="releaseLabel" class="release-label">Version development</p>', f'<p id="releaseLabel" class="release-label">{prefix} {version}</p>', 1)
     if config["sentryEnvironment"] == "staging":
         html = html.replace("</head>", '  <meta name="robots" content="noindex, nofollow">\n</head>', 1)
     if injections:

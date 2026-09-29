@@ -337,6 +337,13 @@ select {
   line-height: 1.5;
 }
 
+.app-header .release-label {
+  margin: 3px 0 0;
+  color: #8b95a3;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .info-panel .status-message {
   margin-bottom: 0;
 }
@@ -431,26 +438,101 @@ select {
 }
 
 .plan-picker-option {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  min-height: 60px;
-  padding: 8px 10px;
-  border: 0;
+  min-height: 52px;
+  padding: 6px;
   border-bottom: 1px solid #edf0f4;
   background: #ffffff;
   color: var(--text);
-  text-align: left;
-  cursor: pointer;
 }
 
 .plan-picker-option:last-child {
   border-bottom: 0;
 }
 
-.plan-picker-option:hover,
-.plan-picker-option:focus {
+.plan-picker-option-select {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-picker-option-select:hover,
+.plan-picker-option-select:focus-visible {
   background: var(--accent-soft);
   outline: none;
+}
+
+.plan-picker-delete {
+  flex: 0 0 36px;
+}
+
+.save-plan-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  color: var(--text);
+  box-shadow: 0 20px 60px rgba(18, 32, 46, 0.28);
+}
+
+.save-plan-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+#savePlanForm {
+  display: grid;
+  gap: 14px;
+}
+
+#savePlanForm h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.save-plan-name-field {
+  display: grid;
+  gap: 6px;
+  font-weight: 650;
+}
+
+.save-plan-name-field input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+
+.save-plan-name-field input:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgba(15, 118, 110, 0.18);
+}
+
+.save-plan-name-hint {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.save-plan-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .plan-picker-summary {
@@ -471,12 +553,22 @@ select {
   white-space: normal;
 }
 
+.plan-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 650;
+}
+
 .plan-picker-target {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   gap: 4px;
   white-space: nowrap;
+}
+
+.plan-picker-summary.icons-only .plan-picker-target {
+  gap: 0;
 }
 
 .result-actions {
@@ -879,8 +971,7 @@ body.material-picker-open {
 
 .primary-button,
 .secondary-button,
-.remove-button,
-.tab-button {
+.remove-button {
   height: 36px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -900,15 +991,13 @@ body.material-picker-open {
 }
 
 .secondary-button,
-.remove-button,
-.tab-button {
+.remove-button {
   background: #ffffff;
   color: var(--text);
 }
 
 .secondary-button:hover,
-.remove-button:hover,
-.tab-button:hover {
+.remove-button:hover {
   background: #edf3f5;
 }
 
@@ -971,28 +1060,6 @@ body.material-picker-open {
 .recipe-filter-change-number {
   color: #dc2626;
   font-weight: 850;
-}
-
-.tabs {
-  display: inline-flex;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
-}
-
-.tab-button {
-  min-width: 118px;
-  border: 0;
-  border-radius: 0;
-}
-
-.tab-button + .tab-button {
-  border-left: 1px solid var(--border-strong);
-}
-
-.tab-button.active {
-  background: var(--accent);
-  color: #ffffff;
 }
 
 .status-message {
@@ -1227,6 +1294,7 @@ body.result-focus-mode .graph-viewport {
   border-radius: 2px;
   background: rgba(21, 89, 130, 0.92);
   color: #e8f3fb;
+  cursor: default;
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
   transition: opacity 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease, outline-color 0.16s ease;
 }
@@ -1371,7 +1439,7 @@ body.result-focus-mode .graph-viewport {
   padding-right: 28px;
 }
 
-.graph-drag-handle {
+.graph-node-media {
   display: inline-grid;
   place-items: center;
   width: 100%;
@@ -1382,14 +1450,11 @@ body.result-focus-mode .graph-viewport {
   padding: 4px;
   background: rgba(8, 13, 18, 0.36);
   color: rgba(255, 255, 255, 0.88);
-  cursor: grab;
   font-size: 11px;
   font-weight: 850;
   line-height: 1;
   overflow: hidden;
   text-align: center;
-  touch-action: none;
-  user-select: none;
 }
 
 .graph-device-icon {
@@ -1423,21 +1488,6 @@ body.result-focus-mode .graph-viewport {
   pointer-events: none;
   user-select: none;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.42));
-}
-
-.graph-drag-zone {
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-
-.graph-node.dragging .graph-drag-handle {
-  cursor: grabbing;
-  background: rgba(0, 0, 0, 0.42);
-}
-
-.graph-node.dragging .graph-drag-zone {
-  cursor: grabbing;
 }
 
 .switch-recipe-button {
@@ -1804,17 +1854,6 @@ body.result-focus-mode .graph-viewport {
   background: rgba(28, 110, 39, 0.92);
 }
 
-.graph-node.recipe.draggable {
-  cursor: text;
-  user-select: text;
-}
-
-.graph-node.recipe.dragging {
-  z-index: 55;
-  cursor: grabbing;
-  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.34);
-}
-
 .graph-node.recipe.alternate {
   border-color: #8a5ec2;
   background: rgba(91, 57, 126, 0.92);
@@ -2036,15 +2075,6 @@ body.result-focus-mode .graph-viewport {
   .recipe-mode-option {
     flex: 1;
     justify-content: center;
-  }
-
-  .tabs {
-    width: 100%;
-  }
-
-  .tab-button {
-    flex: 1;
-    min-width: 0;
   }
 
   .graph-viewport {

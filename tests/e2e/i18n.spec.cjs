@@ -9,6 +9,7 @@ test('Simplified Chinese localizes UI, official game names, search, and calculat
   await expect(page.locator('#languageSelect')).toHaveValue('zh-CN');
   await expect(page.getByRole('heading', {name: '生产目标'})).toBeVisible();
   await expect(page.locator('#dataSummary')).toContainText('个配方', {timeout: 30000});
+  await expect(page.locator('#recipeFilterButton')).toContainText('配方');
 
   await page.locator('.item-input').first().click();
   await expect(page.getByRole('dialog', {name: '选择目标材料'})).toBeVisible();
@@ -38,4 +39,45 @@ test('material order follows the same game progression in every language', async
   expect(english.slice(0, 4)).toEqual(['Desc_Leaves_C', 'Desc_Wood_C', 'Desc_Mycelia_C', 'Desc_HogParts_C']);
   expect(english.indexOf('Desc_OreIron_C')).toBeLessThan(english.indexOf('Desc_IronIngot_C'));
   expect(english.indexOf('Desc_IronIngot_C')).toBeLessThan(english.indexOf('Desc_IronPlate_C'));
+});
+
+test('every supported language loads localized planner UI without English fallback labels', async ({page}) => {
+  const locales = ['fr-FR', 'it-IT', 'de-DE', 'es-ES', 'ja-JP', 'ko-KR', 'pl-PL', 'pt-BR', 'ru-RU', 'zh-CN', 'zh-TW', 'uk-UA'];
+  for (const locale of locales) {
+    await page.goto(`/?lang=${locale}&analytics_test=1`);
+    await expect(page.locator('html')).toHaveAttribute('lang', locale);
+    expect(await page.title()).not.toBe('Satisfactory Production Planner');
+    expect(await page.locator('meta[name="description"]').getAttribute('content')).not.toContain('Plan Satisfactory production targets');
+    await expect(page.locator('#recipeFilterButton')).not.toContainText('Recipes');
+    await expect(page.locator('#infoHeading')).not.toHaveText('Plan Information');
+    await expect(page.locator('#dataSummary')).not.toContainText('Connecting to production planner service...', {timeout: 30000});
+    await expect(page.locator('#dataSummary')).not.toContainText(' recipes · ');
+    await page.locator('#recipeFilterButton').click();
+    const recipeDialog = page.locator('.recipe-filter-dialog');
+    await expect(recipeDialog).toBeVisible();
+    await expect(recipeDialog).not.toContainText('Recipe Filter');
+    await expect(recipeDialog).not.toContainText('Search materials or recipes');
+    await expect(recipeDialog).not.toContainText('RawMaterial');
+    await expect(recipeDialog).not.toContainText('PowerRecipe');
+    await expect(recipeDialog).not.toContainText('NormalMaterial');
+    await expect(recipeDialog).not.toContainText('recipe row(s)');
+    await expect(recipeDialog).not.toContainText('material(s)');
+    await expect(recipeDialog).not.toContainText('selected ·');
+    await page.keyboard.press('Escape');
+  }
+});
+
+test('privacy notice follows the selected language and can be changed on the page', async ({page}) => {
+  await page.goto('/?lang=ja-JP&analytics_test=1');
+  await expect(page.locator('a[href^="privacy.html"]')).toHaveAttribute('href', 'privacy.html?lang=ja-JP');
+  for (const locale of ['fr-FR', 'it-IT', 'de-DE', 'es-ES', 'ja-JP', 'ko-KR', 'pl-PL', 'pt-BR', 'ru-RU', 'zh-CN', 'zh-TW', 'uk-UA']) {
+    await page.goto(`/privacy.html?lang=${locale}`);
+    await expect(page.locator('html')).toHaveAttribute('lang', locale);
+    await expect(page.locator('#privacyContent')).not.toContainText('records anonymous usage events');
+  }
+  await page.goto('/privacy.html?lang=ja-JP');
+  await expect(page.locator('#privacyContent h1')).toHaveText('プライバシー');
+  await page.locator('#privacyLanguage').selectOption('zh-TW');
+  await expect(page.locator('#privacyContent h1')).toHaveText('隱私權聲明');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-TW');
 });

@@ -1,13 +1,16 @@
-﻿(() => {
+(() => {
   "use strict";
 
   const targetRows = document.getElementById("targetRows");
   const targetTemplate = document.getElementById("targetRowTemplate");
   const addTargetButton = document.getElementById("addTargetButton");
   const savePlanButton = document.getElementById("savePlanButton");
+  const savePlanDialog = document.getElementById("savePlanDialog");
+  const savePlanForm = document.getElementById("savePlanForm");
+  const savePlanNameInput = document.getElementById("savePlanNameInput");
+  const cancelSavePlanButton = document.getElementById("cancelSavePlanButton");
   const planLibrary = document.querySelector(".plan-library");
   const savedPlanSelect = document.getElementById("savedPlanSelect");
-  const historyPlanSelect = document.getElementById("historyPlanSelect");
   const recipeFilterButton = document.getElementById("recipeFilterButton");
   const plannerForm = document.getElementById("plannerForm");
   const calculateButton = document.getElementById("calculateButton");
@@ -19,11 +22,8 @@
   const calculationLoading = document.getElementById("calculationLoading");
   const statusMessage = document.getElementById("statusMessage");
   const treeView = document.getElementById("treeView");
-  const tableView = document.getElementById("tableView");
-  const resetLayoutButton = document.getElementById("resetLayoutButton");
   const findRecipeButton = document.getElementById("findRecipeButton");
   const locateChangedRecipesButton = document.getElementById("locateChangedRecipesButton");
-  const tabButtons = Array.from(document.querySelectorAll(".tab-button"));
   const resultFocusControls = document.getElementById("resultFocusControls");
   const pageFocusButton = document.getElementById("pageFocusButton");
   const browserFocusButton = document.getElementById("browserFocusButton");
@@ -38,7 +38,6 @@
   const RECIPE_MODE_BASE = "base";
   const RECIPE_MODE_BEST_EFFICIENCY = "bestEfficiency";
   const DIRECT_RAW_RECIPE_ID = "__raw__";
-  const TARGET_HISTORY_LIMIT = 10;
   const recipeModeInputs = [];
   const i18n = window.PlannerI18n;
   const t = (key, parameters) => i18n?.t(key, parameters) || key;
@@ -50,17 +49,13 @@
   const selectedRecipeIds = new Set();
   const disabledRawMaterialClasses = new Set();
   const preferredPlanByTargetKey = new Map();
-  const recipeNodePositions = new Map();
-  let activeTab = "tree";
   let resultFocusMode = null;
   let savedState = loadPlannerState();
   let savedTargetPlans = normalizeTargetPlanList(savedState.savedTargetPlans);
-  let targetHistory = normalizeTargetPlanList(savedState.targetHistory).slice(0, TARGET_HISTORY_LIMIT);
   let pendingRecipeMode = RECIPE_MODE_BASE;
   let suppressStateSave = false;
   let activePlanKey = "";
   let activePreferredPlan = [];
-  let activeGraphDrag = null;
   let activeGraphPan = null;
   let activeRecipeFilterDrag = null;
   let selectedGraphRecipeId = "";
@@ -78,16 +73,21 @@
   const analytics = window.PlannerAnalytics || { track: () => false };
 
   addTargetButton.addEventListener("click", () => addTargetRow());
-  savePlanButton?.addEventListener("click", saveCurrentTargetPlan);
+  savePlanButton?.addEventListener("click", openSavePlanDialog);
+  savePlanForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const saved = saveCurrentTargetPlan(savePlanNameInput?.value || "");
+    if (saved) {
+      if (savePlanDialog instanceof HTMLDialogElement) savePlanDialog.close();
+      analytics.track("plan_saved", { context: savePlanNameInput?.value.trim() ? "named" : "unnamed" });
+    }
+  });
+  cancelSavePlanButton?.addEventListener("click", () => savePlanDialog?.close());
   savedPlanSelect?.addEventListener("click", (event) => handleTargetPlanPickerClick(event, savedPlanSelect, savedTargetPlans));
-  historyPlanSelect?.addEventListener("click", (event) => handleTargetPlanPickerClick(event, historyPlanSelect, targetHistory));
   recipeFilterButton?.addEventListener("click", openRecipeFilterDialog);
   plannerForm.addEventListener("submit", (event) => {
     event.preventDefault();
     calculate();
-  });
-  tabButtons.forEach((button) => {
-    button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
   pageFocusButton?.addEventListener("click", switchToPageFocusMode);
   browserFocusButton?.addEventListener("click", enterBrowserFullscreen);
@@ -95,7 +95,6 @@
   document.addEventListener("fullscreenchange", handleFullscreenChange);
   document.addEventListener("keydown", handleFocusModeKeydown);
   updateFocusControls();
-  resetLayoutButton?.addEventListener("click", resetGraphLayout);
   findRecipeButton?.addEventListener("click", () => openFindRecipeDialog());
   locateChangedRecipesButton?.addEventListener("click", () => openFindRecipeDialog({ recipeIds: changedRecipeIdsToLocate }));
   initialLoadingRetry?.addEventListener("click", () => window.location.reload());
@@ -108,7 +107,6 @@
 
   try {
     restorePreferredPlanCache(savedState.selectionCacheVersion === SELECTION_CACHE_VERSION ? savedState.preferredPlanByTarget : []);
-    restoreRecipeNodePositions(savedState.recipeNodePositions);
   } catch (error) {
     window.PlannerDiagnostics.reportError(error, "restore-state");
     console.error("Failed to restore planner state", error);
@@ -134,7 +132,6 @@
       itemsByClass.clear();
       items.forEach((item) => itemsByClass.set(item.className, item));
       savedTargetPlans = normalizeTargetPlanList(savedState.savedTargetPlans);
-      targetHistory = normalizeTargetPlanList(savedState.targetHistory).slice(0, TARGET_HISTORY_LIMIT);
       if (!restoreTargetRows(savedState.targets)) {
         addTargetRow(null, "", { focus: false, save: false });
       }
@@ -163,7 +160,7 @@
       }
       renderTargetPlanSelectors();
       dataSummary.textContent = t("status.connectionFailed");
-      setStatus(`Unable to load data: ${error.message} Please retry.`, true);
+      setStatus(t("status.loadFailed"), true);
       showInitialLoadingError();
       analytics.track("planner_load_failed", {
         durationMs: performance.now() - plannerLoadStartedAt,
@@ -206,7 +203,6 @@
       return;
     }
     activatePlanCacheForCurrentTargets();
-    addTargetPlanToHistory(targetSnapshotsFromTargets(targets));
     savePlannerState();
 
     let calculationResult = null;
@@ -237,7 +233,7 @@
           durationMs: performance.now() - calculationStartedAt,
           targetCount: targets.length,
         });
-        handleRecipeExpansionRequired(result, targets);
+        handleRecipeExpansionRequired(result);
         return;
       }
       storeCurrentPreferredPlan();
@@ -274,9 +270,8 @@
       lastServerResult = null;
       lastServerTargets = [];
       lastServerPlanSignature = "";
-      setStatus(`Calculation failed: ${error.message} Problem ID: ${issue.id}.`, true);
+      setStatus(t("status.calcFailed", { issue: issue.id }), true);
       treeView.replaceChildren(makeEmptyMessage(t("results.noPlan")));
-      tableView.replaceChildren(makeEmptyMessage(t("results.noTable")));
       analytics.track("calculation_failed", {
         durationMs: performance.now() - calculationStartedAt,
         targetCount: targets.length,
@@ -294,16 +289,15 @@
     document.body.classList.toggle("is-calculating", isLoading);
   }
 
-  function handleRecipeExpansionRequired(result, targets) {
+  function handleRecipeExpansionRequired(result) {
     const requiredRecipeIds = normalizedRecipeIdList(result.requiredRecipeIds);
     lastServerResult = null;
     lastServerTargets = [];
     lastServerPlanSignature = "";
 
     if (!requiredRecipeIds.length) {
-      setStatus(`Calculation failed: ${result.failure || "current recipe selection cannot satisfy the target."}`, true);
+      setStatus(t("status.expansionFailed"), true);
       treeView.replaceChildren(makeEmptyMessage(t("results.noPlan")));
-      tableView.replaceChildren(makeEmptyMessage(t("results.noTable")));
       return;
     }
 
@@ -311,18 +305,12 @@
     savePlannerState();
     updateRecipeFilterButton();
 
-    const targetText = targetListText(result.targets, targets);
-    const notice = result.message || `Producing ${targetText} requires the following recipes.`;
     openRecipeFilterDialog({
       filterRecipeIds: requiredRecipeIds,
-      notice: `${notice} They have been selected automatically.`,
+      notice: t("recipes.expansionNotice"),
     });
-    setStatus(
-      `The current recipe selection cannot produce ${targetText}. Added ${formatInteger(requiredRecipeIds.length)} missing recipe(s); calculate again.`,
-      true,
-    );
-    treeView.replaceChildren(makeEmptyMessage("The recipe filter is open and the missing recipes have been selected. Calculate again."));
-    tableView.replaceChildren(makeEmptyMessage("The recipe filter is open and the missing recipes have been selected. Calculate again."));
+    setStatus(t("status.expansionFailed"), true);
+    treeView.replaceChildren(makeEmptyMessage(t("results.expansionEmpty")));
   }
 
   function normalizedRecipeIdList(values) {
@@ -369,7 +357,6 @@
     selectedGraphRecipeId = "";
     selectedGraphHighlightDepth = 1;
     renderGraphView(result, { preserveViewport: Boolean(options.preserveGraphViewport) });
-    renderMergedTable(result.totals || []);
     if (options.selectTree) {
       selectTab("tree");
     }
@@ -397,15 +384,9 @@
         : normalizedRecipeIdList(savedState.enabledRecipeIds),
       disabledRawMaterialClasses: disabledRawMaterialClassesPayload(),
       savedTargetPlans,
-      targetHistory,
       preferredPlanByTarget: Array.from(preferredPlanByTargetKey.entries()).map(([key, plan]) => ({
         key,
         plan: normalizePreferredPlan(plan),
-      })),
-      recipeNodePositions: Array.from(recipeNodePositions.entries()).map(([id, position]) => ({
-        id,
-        x: roundGraphCoordinate(position.x),
-        y: roundGraphCoordinate(position.y),
       })),
     };
     try {
@@ -441,7 +422,20 @@
       if (!targets.length) {
         continue;
       }
-      addTargetPlanToList(result, targets);
+      const plan = {
+        id: String(entry?.id || entry?.key || "").trim() || createSavedPlanId(),
+        name: String(entry?.name || "").trim(),
+        targets,
+        enabledRecipeIds: Array.isArray(entry?.enabledRecipeIds) ? normalizedRecipeIdList(entry.enabledRecipeIds) : null,
+        disabledRawMaterialClasses: Array.isArray(entry?.disabledRawMaterialClasses)
+          ? normalizeStringList(entry.disabledRawMaterialClasses)
+          : null,
+        savedAt: Number(entry?.savedAt) || Date.now(),
+      };
+      plan.signature = savedTargetPlanSignature(plan);
+      const existingIndex = result.findIndex((savedPlan) => savedPlan.signature === plan.signature);
+      if (existingIndex >= 0) result.splice(existingIndex, 1);
+      result.unshift(plan);
     }
     return result;
   }
@@ -487,51 +481,60 @@
       .join(" + ");
   }
 
-  function addTargetPlanToList(list, targets, limit = Infinity) {
-    const normalized = normalizeTargetSnapshots(targets);
-    const key = targetPlanKey(normalized);
-    if (!key) {
-      return false;
-    }
-    const existingIndex = list.findIndex((entry) => entry.key === key);
-    if (existingIndex >= 0) {
-      list.splice(existingIndex, 1);
-    }
-    list.unshift({
-      key,
-      label: targetPlanLabel(normalized),
-      targets: normalized,
-      savedAt: Date.now(),
-    });
-    if (Number.isFinite(limit) && list.length > limit) {
-      list.length = limit;
-    }
-    return true;
+  function normalizeStringList(values) {
+    return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean))).sort();
   }
 
-  function addTargetPlanToHistory(targets) {
-    if (addTargetPlanToList(targetHistory, targets, TARGET_HISTORY_LIMIT)) {
-      renderTargetPlanSelectors();
-    }
+  function savedTargetPlanSignature(plan) {
+    return JSON.stringify([
+      targetPlanKey(plan.targets),
+      Array.isArray(plan.enabledRecipeIds) ? normalizedRecipeIdList(plan.enabledRecipeIds) : null,
+      Array.isArray(plan.disabledRawMaterialClasses) ? normalizeStringList(plan.disabledRawMaterialClasses) : null,
+    ]);
   }
 
-  function saveCurrentTargetPlan() {
+  function createSavedPlanId() {
+    return window.crypto?.randomUUID?.() || `saved-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function openSavePlanDialog() {
+    if (!collectTargets().length || !(savePlanDialog instanceof HTMLDialogElement)) return;
+    if (savePlanNameInput instanceof HTMLInputElement) savePlanNameInput.value = "";
+    savePlanDialog.showModal();
+    window.requestAnimationFrame(() => savePlanNameInput?.focus());
+  }
+
+  function saveCurrentTargetPlan(name = "") {
     const targets = collectTargets();
     if (!targets.length) {
-      return;
+      return false;
     }
     const snapshots = targetSnapshotsFromTargets(targets);
-    addTargetPlanToList(savedTargetPlans, snapshots);
+    if (!snapshots.length) {
+      return false;
+    }
+    const plan = {
+      id: "",
+      name: String(name || "").trim(),
+      targets: snapshots,
+      enabledRecipeIds: selectedRecipeIdsPayload(),
+      disabledRawMaterialClasses: disabledRawMaterialClassesPayload(),
+      savedAt: Date.now(),
+    };
+    plan.signature = savedTargetPlanSignature(plan);
+    const existingIndex = savedTargetPlans.findIndex((savedPlan) => savedPlan.signature === plan.signature);
+    plan.id = existingIndex >= 0 ? savedTargetPlans.splice(existingIndex, 1)[0].id : createSavedPlanId();
+    savedTargetPlans.unshift(plan);
     savePlannerState();
     renderTargetPlanSelectors();
-    setStatus(t("status.saved", { plan: targetPlanLabel(snapshots) }), false);
+    setStatus(t("status.saved", { plan: plan.name || targetPlanLabel(snapshots) }), false);
+    return true;
   }
 
   function renderTargetPlanSelectors() {
     renderTargetPlanPicker(savedPlanSelect, savedTargetPlans, t("targets.noSaved"), t("targets.saved"));
-    renderTargetPlanPicker(historyPlanSelect, targetHistory, t("targets.noHistory"), t("targets.history"));
     if (planLibrary instanceof HTMLElement) {
-      planLibrary.hidden = !savedTargetPlans.length && !targetHistory.length;
+      planLibrary.hidden = !savedTargetPlans.length;
     }
   }
 
@@ -555,14 +558,25 @@
     menu.hidden = true;
     menu.replaceChildren();
     plans.forEach((plan) => {
-      const option = document.createElement("button");
-      option.type = "button";
+      const option = document.createElement("div");
       option.className = "plan-picker-option";
-      option.dataset.planKey = plan.key;
-      option.setAttribute("role", "option");
-      option.title = plan.label || targetPlanLabel(plan.targets);
-      option.setAttribute("aria-label", option.title);
-      option.appendChild(renderTargetPlanSummary(plan.targets, { iconsOnly: true }));
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "plan-picker-option-select";
+      select.dataset.planId = plan.id;
+      const planLabel = plan.name || targetPlanLabel(plan.targets);
+      select.title = planLabel;
+      select.setAttribute("aria-label", planLabel);
+      select.appendChild(renderTargetPlanSummary(plan.targets, { iconsOnly: true, name: plan.name }));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "remove-button plan-picker-delete";
+      remove.dataset.planId = plan.id;
+      remove.textContent = "×";
+      const deleteLabel = t("targets.deleteSavedPlan", { plan: planLabel });
+      remove.title = deleteLabel;
+      remove.setAttribute("aria-label", deleteLabel);
+      option.append(select, remove);
       menu.appendChild(option);
     });
   }
@@ -570,23 +584,22 @@
   function renderTargetPlanSummary(targets, options = {}) {
     const summary = document.createElement("span");
     summary.className = `plan-picker-summary${options.iconsOnly ? " icons-only" : ""}`;
-    normalizeTargetSnapshots(targets).forEach((target, index) => {
-      if (index > 0 && !options.iconsOnly) {
-        summary.appendChild(document.createTextNode(" + "));
-      }
+    if (options.name) {
+      const name = document.createElement("span");
+      name.className = "plan-picker-name";
+      name.textContent = options.name;
+      summary.appendChild(name);
+    }
+    normalizeTargetSnapshots(targets).forEach((target) => {
       const token = document.createElement("span");
       token.className = "plan-picker-target";
       const item = itemsByClass.get(target.itemClass) || {
         className: target.itemClass,
         name: target.itemName,
       };
-      token.append(
-        makeMaterialIcon(item, "plan-picker-icon"),
-      );
+      token.append(makeMaterialIcon(item, "plan-picker-icon"));
       if (!options.iconsOnly) {
         token.appendChild(document.createTextNode(`${target.itemName} (${formatNumber(target.rate)})`));
-      } else {
-        token.appendChild(document.createTextNode(`(${formatNumber(target.rate)})`));
       }
       summary.appendChild(token);
     });
@@ -598,12 +611,22 @@
       return;
     }
     const target = event.target instanceof Element ? event.target : null;
-    const option = target?.closest(".plan-picker-option");
-    if (option instanceof HTMLElement) {
-      const plan = plans.find((entry) => entry.key === option.dataset.planKey);
+    const remove = target?.closest(".plan-picker-delete");
+    if (remove instanceof HTMLButtonElement) {
+      const planIndex = plans.findIndex((entry) => entry.id === remove.dataset.planId);
+      if (planIndex >= 0) {
+        plans.splice(planIndex, 1);
+        savePlannerState();
+        renderTargetPlanSelectors();
+      }
+      return;
+    }
+    const option = target?.closest(".plan-picker-option-select");
+    if (option instanceof HTMLButtonElement) {
+      const plan = plans.find((entry) => entry.id === option.dataset.planId);
       closeTargetPlanPickers();
       if (plan) {
-        applyTargetPlan(plan.targets);
+        applyTargetPlan(plan);
         calculate();
       }
       return;
@@ -624,16 +647,25 @@
 
   function closeTargetPlanPickers() {
     document.querySelectorAll(".plan-picker-menu").forEach((menu) => {
-      if (menu instanceof HTMLElement) {
-        menu.hidden = true;
-      }
+      if (menu instanceof HTMLElement) menu.hidden = true;
     });
   }
 
-  function applyTargetPlan(targets) {
-    const normalized = normalizeTargetSnapshots(targets);
+  function applyTargetPlan(plan) {
+    const normalized = normalizeTargetSnapshots(plan?.targets);
     if (!normalized.length) {
       return;
+    }
+    if (Array.isArray(plan.enabledRecipeIds)) {
+      const selectable = selectableRecipeIdSet();
+      selectedRecipeIds.clear();
+      normalizedRecipeIdList(plan.enabledRecipeIds).forEach((recipeId) => {
+        if (selectable.has(recipeId)) selectedRecipeIds.add(recipeId);
+      });
+    }
+    if (Array.isArray(plan.disabledRawMaterialClasses)) {
+      disabledRawMaterialClasses.clear();
+      normalizeStringList(plan.disabledRawMaterialClasses).forEach((itemClass) => disabledRawMaterialClasses.add(itemClass));
     }
     suppressStateSave = true;
     targetRows.replaceChildren();
@@ -649,6 +681,7 @@
     suppressStateSave = false;
     updateRemoveButtons();
     activatePlanCacheForCurrentTargets();
+    updateRecipeFilterButton();
     savePlannerState();
   }
 
@@ -900,41 +933,6 @@
       .join("|");
   }
 
-  function restoreRecipeNodePositions(positionEntries) {
-    recipeNodePositions.clear();
-
-    if (Array.isArray(positionEntries)) {
-      positionEntries.forEach((entry) => {
-        const id = String(entry?.id || "").trim();
-        const x = Number(entry?.x);
-        const y = Number(entry?.y);
-        if (id && Number.isFinite(x) && Number.isFinite(y)) {
-          recipeNodePositions.set(id, { x, y });
-        }
-      });
-      return;
-    }
-
-    if (positionEntries && typeof positionEntries === "object") {
-      Object.entries(positionEntries).forEach(([id, value]) => {
-        const x = Number(value?.x);
-        const y = Number(value?.y);
-        if (id && Number.isFinite(x) && Number.isFinite(y)) {
-          recipeNodePositions.set(id, { x, y });
-        }
-      });
-    }
-  }
-
-  function resetGraphLayout() {
-    if (!recipeNodePositions.size) {
-      return;
-    }
-    recipeNodePositions.clear();
-    savePlannerState();
-    recalculateIfTargetsExist();
-  }
-
   function normalizeRecipeMode(rawMode) {
     const mode = String(rawMode || "").trim();
     if (mode === RECIPE_MODE_BASE || mode === RECIPE_MODE_BEST_EFFICIENCY) {
@@ -1067,7 +1065,7 @@
 
       const item = selectedRowItem(row);
       if (!item) {
-        setStatus(t("status.unmatched", { name: rawName || "empty input" }), true);
+        setStatus(t("status.unmatched", { name: rawName || t("common.unknown") }), true);
         row.querySelector(".item-input-box")?.classList.add("invalid");
         itemInput.focus();
         return [];
@@ -1825,8 +1823,6 @@
         node.height = constants.nodeHeight;
       });
     });
-    applySavedRecipeNodePositions(nodes);
-
     const maxColumn = Math.max(0, ...sortedColumns);
     const autoWidth = constants.marginX * 2 + constants.nodeWidth + maxColumn * (constants.nodeWidth + constants.columnGap);
     const autoHeight = Math.max(constants.minHeight, constants.marginY * 2 + maxColumnHeight);
@@ -1834,24 +1830,6 @@
     const busRoutes = routeEdges(edges, nodeById, constants);
     const { width, height } = graphExtents(nodes, autoWidth, autoHeight, edges);
     return { nodes, width, height, nodeById, busRoutes, columnGap: constants.columnGap };
-  }
-
-  function applySavedRecipeNodePositions(nodes) {
-    nodes.forEach((node) => {
-      if (node.type !== "recipe") {
-        return;
-      }
-      const position = recipeNodePositions.get(node.id);
-      if (!position) {
-        return;
-      }
-      const x = Number(position.x);
-      const y = Number(position.y);
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        node.x = Math.max(0, x);
-        node.y = Math.max(0, y);
-      }
-    });
   }
 
   function graphExtents(nodes, minWidth, minHeight, edges = []) {
@@ -2724,11 +2702,10 @@
     const card = document.createElement("article");
     card.className = `graph-node ${node.type}${node.alternate ? " alternate" : ""}`;
     card.dataset.nodeId = node.id;
-    card.draggable = false;
     card.addEventListener("dragstart", (event) => event.preventDefault());
     card.addEventListener("click", (event) => {
       const target = event.target;
-      if (target instanceof Element && target.closest("button, .graph-drag-zone, .graph-drag-handle")) {
+      if (target instanceof Element && target.closest("button")) {
         return;
       }
       event.stopPropagation();
@@ -2738,9 +2715,6 @@
         selectGraphNode(graph, node.id);
       }
     });
-    if (node.type === "recipe") {
-      card.classList.add("draggable");
-    }
     if (hasSwitchButton) {
       card.classList.add("has-switch-button");
     }
@@ -2763,8 +2737,8 @@
       switchButton.type = "button";
       switchButton.className = "switch-recipe-button";
       switchButton.textContent = "R";
-      switchButton.title = "Show this material in the recipe filter";
-      switchButton.setAttribute("aria-label", `Show recipes for ${recipeMaterial?.name || node.title}`);
+      switchButton.title = t("recipes.filterOpen");
+      switchButton.setAttribute("aria-label", t("recipes.showForMaterial", { name: recipeMaterial?.name || node.title }));
       switchButton.addEventListener("click", (event) => {
         event.stopPropagation();
         openRecipeFilterDialog({ materialClass: recipeMaterial?.className || "" });
@@ -2795,14 +2769,14 @@
     if (graphNodeHasCheck(node)) {
       const checkLabel = document.createElement("label");
       checkLabel.className = "graph-check-control";
-      checkLabel.title = `Mark this ${graphNodeCheckLabel(node)} as checked`;
+      checkLabel.title = t("graph.checkTitle", { type: graphNodeCheckLabel(node) });
       checkLabel.addEventListener("click", (event) => event.stopPropagation());
       checkLabel.addEventListener("pointerdown", (event) => event.stopPropagation());
 
       const checkInput = document.createElement("input");
       checkInput.type = "checkbox";
       checkInput.className = "graph-check-input";
-      checkInput.setAttribute("aria-label", `Mark ${node.title || graphNodeCheckLabel(node)} as checked`);
+      checkInput.setAttribute("aria-label", t("graph.checkAria", { name: node.title || graphNodeCheckLabel(node) }));
       const sourceCheckInput = node.sourceElement?.querySelector(".graph-check-input");
       checkInput.checked = sourceCheckInput instanceof HTMLInputElement ? sourceCheckInput.checked : false;
       if (graph.isCompactFocus) {
@@ -2820,22 +2794,16 @@
     let media = null;
     if (node.type === "recipe") {
       media = document.createElement("div");
-      media.className = "graph-node-media graph-drag-handle";
-      media.title = node.recipe?.deviceIcons?.[0]?.name
-        ? `Drag recipe node · ${node.recipe.deviceIcons[0].name}`
-        : "Drag recipe node";
+      media.className = "graph-node-media";
       const iconPath = String(node.recipe?.deviceIconPath || "").trim();
       if (iconPath) {
         const icon = document.createElement("img");
         icon.className = "graph-device-icon";
         icon.src = iconPath;
-        icon.alt = node.recipe?.deviceIcons?.[0]?.name || "Production building";
+        icon.alt = node.recipe?.deviceIcons?.[0]?.name || t("graph.building");
         icon.draggable = false;
         media.appendChild(icon);
-      } else {
-        media.textContent = "Drag";
       }
-      bindGraphDragStart(media, node, graph);
       card.classList.add("has-media");
     } else {
       const iconPath = materialIconPath(node.item);
@@ -2845,7 +2813,7 @@
         const icon = document.createElement("img");
         icon.className = "graph-material-icon";
         icon.src = iconPath;
-        icon.alt = node.item?.name || node.title || "Material";
+        icon.alt = node.item?.name || node.title || t("graph.material");
         icon.draggable = false;
         media.appendChild(icon);
         card.classList.add("has-media");
@@ -2869,8 +2837,7 @@
       kind.append(alternateTag, document.createTextNode(graphNodeKindText(node)));
     }
     if (node.type === "recipe") {
-      kind.title = "Drag recipe node from here";
-      bindGraphDragStart(kind, node, graph);
+      kind.title = node.recipe?.deviceIcons?.[0]?.name || "";
     }
 
     const title = document.createElement("div");
@@ -3148,7 +3115,7 @@
   }
 
   function graphNodeCheckLabel(node) {
-    return node.type === "raw" ? "raw material" : "recipe";
+    return node.type === "raw" ? t("category.RawMaterial") : t("kind.recipe");
   }
 
   function graphNodeSwitchRecipe(node) {
@@ -3401,6 +3368,17 @@
     const noticeText = String(options.notice || "").trim();
     let activeMaterialClass = String(options.materialClass || "").trim();
     const expansionState = new Map();
+    const materialOrder = new Map(recipeCatalog.materials
+      .map((group, catalogIndex) => ({
+        materialClass: String(group.item?.className || "").trim(),
+        catalogIndex,
+        modified: groupHasModifiedRecipeSelection(group),
+      }))
+      .sort((left, right) => (
+        Number(right.modified) - Number(left.modified)
+        || left.catalogIndex - right.catalogIndex
+      ))
+      .map(({ materialClass }, index) => [materialClass, index]));
 
     const overlay = document.createElement("div");
     overlay.className = "recipe-filter-overlay";
@@ -3419,8 +3397,8 @@
 
     const dragHandle = document.createElement("div");
     dragHandle.className = "recipe-filter-drag-handle";
-    dragHandle.title = "Drag recipe filter panel";
-    dragHandle.setAttribute("aria-label", "Drag recipe filter panel");
+    dragHandle.title = t("graph.dragFilter");
+    dragHandle.setAttribute("aria-label", t("graph.dragFilter"));
     const dragGrip = document.createElement("span");
     dragGrip.className = "recipe-filter-drag-grip";
     dragHandle.appendChild(dragGrip);
@@ -3552,6 +3530,7 @@
         activeRecipeIdFilter,
         expansionState,
         activeMaterialClass,
+        materialOrder,
       );
       if (Number.isFinite(options.restoreScrollTop)) {
         const scrollTop = Math.max(0, Number(options.restoreScrollTop));
@@ -3772,7 +3751,7 @@
     setRecipeFilterControlDisabled(
       overlay.querySelector('[data-recipe-filter-action="clear-alternates"]'),
       isDefaultRecipeSelection(),
-      "All default recipes are already selected and no optional recipes are selected.",
+      t("recipes.clearAlternatesHelp"),
     );
   }
 
@@ -3901,7 +3880,7 @@
     return groupHasModifiedRecipeSelection(group, recipes);
   }
 
-  function renderRecipeFilterList(list, rawQuery, summary, focusTarget = null, recipeIdFilter = null, expansionState = null, materialClassFilter = "") {
+  function renderRecipeFilterList(list, rawQuery, summary, focusTarget = null, recipeIdFilter = null, expansionState = null, materialClassFilter = "", materialOrder = null) {
     const query = normalize(rawQuery);
     const normalizedFocusTarget = normalizeRecipeFilterFocus(focusTarget);
     const exactRecipeIds = recipeIdFilter instanceof Set ? recipeIdFilter : normalizeRecipeIdSet(recipeIdFilter);
@@ -3934,8 +3913,11 @@
       })
       .filter(Boolean)
       .sort((left, right) => (
-        Number(right.modified) - Number(left.modified)
-        || left.catalogIndex - right.catalogIndex
+        materialOrder instanceof Map
+          ? (materialOrder.get(String(left.group.item?.className || "").trim()) ?? left.catalogIndex)
+            - (materialOrder.get(String(right.group.item?.className || "").trim()) ?? right.catalogIndex)
+          : Number(right.modified) - Number(left.modified)
+            || left.catalogIndex - right.catalogIndex
       ));
 
     visibleGroups.forEach(({ group, recipes, modified }) => {
@@ -3963,11 +3945,11 @@
       name.className = "recipe-material-name";
       name.append(
         makeMaterialIcon(group.item, "recipe-material-icon"),
-        document.createTextNode(group.item?.name || group.item?.className || "Unknown"),
+        document.createTextNode(group.item?.name || group.item?.className || t("common.unknown")),
       );
       const meta = document.createElement("span");
       meta.className = "recipe-material-meta";
-      meta.textContent = `${formatInteger(displayedRecipeCount)} recipe(s) · ${group.materialCategory || ""}`;
+      meta.textContent = `${t("recipes.count", { count: formatInteger(displayedRecipeCount) })} · ${materialCategoryText(group.item, group.materialCategory)}`;
       groupSummary.append(name, meta);
       details.appendChild(groupSummary);
 
@@ -3975,7 +3957,7 @@
         details.appendChild(renderDirectRawBaseRecipeRow(group, {
           onSelectionChange: () => {
             captureRecipeFilterExpansionState(list, expansionState);
-            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, expansionState, materialClassFilter);
+            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, expansionState, materialClassFilter, materialOrder);
           },
         }));
       }
@@ -3985,7 +3967,7 @@
           required: hasExactRecipeFilter && exactRecipeIds.has(recipe.id),
           onSelectionChange: () => {
             captureRecipeFilterExpansionState(list, expansionState);
-            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, expansionState, materialClassFilter);
+            renderRecipeFilterList(list, rawQuery, summary, null, exactRecipeIds, expansionState, materialClassFilter, materialOrder);
           },
         });
         if (normalizedFocusTarget?.recipeId && recipe.id === normalizedFocusTarget.recipeId) {
@@ -4017,11 +3999,18 @@
     }
     if (summary) {
       const materialFilterItem = itemsByClass.get(materialClassFilter);
+      const counts = {
+        selected: formatInteger(selectedRecipeIds.size),
+        total: formatInteger(recipeCatalog.selectableRecipeIds.length),
+        materials: formatInteger(visibleMaterialCount),
+        rows: formatInteger(visibleRecipeCount),
+        required: formatInteger(exactRecipeIds.size),
+      };
       summary.textContent = materialFilterItem
-        ? `${materialFilterItem.name} · ${formatInteger(visibleRecipeCount)} recipe row(s) · ${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected`
+        ? t("recipes.summaryFiltered", { ...counts, material: materialFilterItem.name })
         : hasExactRecipeFilter
-        ? `${formatInteger(visibleRecipeCount)} row(s) for ${formatInteger(exactRecipeIds.size)} required recipe(s) · ${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected`
-        : `${formatInteger(selectedRecipeIds.size)} / ${formatInteger(recipeCatalog.selectableRecipeIds.length)} selected · ${formatInteger(visibleMaterialCount)} material(s), ${formatInteger(visibleRecipeCount)} visible recipe row(s)`;
+        ? t("recipes.summaryRequired", counts)
+        : t("recipes.summaryAll", counts);
     }
   }
 
@@ -4064,7 +4053,7 @@
     name.append(recipeTag, document.createTextNode(t("recipes.directRawName", { name: group.item?.name || itemClass })));
     const meta = document.createElement("div");
     meta.className = "recipe-row-meta";
-    meta.textContent = "primary · base · raw source";
+    meta.textContent = `${t("recipes.primary")} · ${t("recipes.base")} · ${t("recipes.rawSource")}`;
     const formula = document.createElement("div");
     formula.className = "recipe-row-formula";
     const selfIngredient = [{ item: group.item, rate: 1 }];
@@ -4110,9 +4099,9 @@
     const meta = document.createElement("div");
     meta.className = "recipe-row-meta";
     meta.textContent = [
-      recipe.relation === "byproduct" ? "byproduct" : "primary",
-      isDefaultRecipe ? "base" : recipe.isAlternate ? "alternate" : "additional",
-      ...(recipe.flags || []),
+      recipe.relation === "byproduct" ? t("recipes.byproduct") : t("recipes.primary"),
+      isDefaultRecipe ? t("recipes.base") : recipe.isAlternate ? t("recipes.alternate") : t("recipes.additional"),
+      ...(recipe.flags || []).map(recipeFlagLabel),
     ].filter(Boolean).join(" · ");
     const formula = document.createElement("div");
     formula.className = "recipe-row-formula";
@@ -4161,11 +4150,18 @@
     return `${recipeSide(recipe.inputs)} = ${recipeSide(recipe.outputs)}`;
   }
 
+  function recipeFlagLabel(flag) {
+    if (flag === "RawMaterial") return t("recipes.rawSource");
+    if (flag === "PowerRecipe") return t("recipes.powerFlag");
+    if (flag === "Package") return t("recipes.packagedFlag");
+    return String(flag || "");
+  }
+
   function renderRecipeSide(entries) {
     const side = document.createElement("span");
     side.className = "recipe-formula-side";
     if (!Array.isArray(entries) || !entries.length) {
-      side.textContent = "None";
+      side.textContent = t("common.none");
       return side;
     }
     entries.forEach((entry, index) => {
@@ -4185,7 +4181,7 @@
 
   function recipeSide(entries) {
     if (!Array.isArray(entries) || !entries.length) {
-      return "None";
+      return t("common.none");
     }
     return entries
       .map((entry) => `${entry.item?.name || ""} (${formatNumber(entry.rate)})`)
@@ -4201,7 +4197,7 @@
   }
 
   function startGraphPan(event, viewport) {
-    if (activeGraphDrag || activeGraphPan) {
+    if (activeGraphPan) {
       return;
     }
     if (typeof event.button === "number" && event.button !== 0) {
@@ -4261,156 +4257,6 @@
     window.addEventListener("pointermove", handleMove, { capture: true, passive: false });
     window.addEventListener("pointerup", stopPan, true);
     window.addEventListener("pointercancel", stopPan, true);
-  }
-
-  function bindGraphDragStart(element, node, graph) {
-    element.classList.add("graph-drag-zone");
-    element.addEventListener("pointerdown", (event) => startGraphNodeDrag(event, node, graph));
-    element.addEventListener("mousedown", (event) => startGraphNodeDrag(event, node, graph));
-    element.addEventListener("touchstart", (event) => startGraphNodeDrag(event, node, graph), { passive: false });
-  }
-
-  function startGraphNodeDrag(event, node, graph) {
-    const target = event.target;
-    if (activeGraphDrag || activeGraphPan || (target instanceof Element && target.closest("button"))) {
-      return;
-    }
-    if (typeof event.button === "number" && event.button !== 0) {
-      return;
-    }
-    const startPoint = graphDragPoint(event);
-    if (!startPoint) {
-      return;
-    }
-
-    event.preventDefault();
-    const card = node.element || event.currentTarget;
-    if (!(card instanceof HTMLElement)) {
-      return;
-    }
-    const startClientX = startPoint.clientX;
-    const startClientY = startPoint.clientY;
-    const startNodeX = node.x;
-    const startNodeY = node.y;
-    let moved = false;
-    const eventNames = graphDragEventNames(event.type);
-
-    activeGraphDrag = { node, graph };
-    card.classList.add("dragging");
-    if (event.type === "pointerdown") {
-      try {
-        card.setPointerCapture?.(event.pointerId);
-      } catch (_error) {
-        // Some browsers can reject capture if the pointer is already gone.
-      }
-    }
-
-    const handleMove = (moveEvent) => {
-      const point = graphDragPoint(moveEvent);
-      if (!point) {
-        return;
-      }
-      moveEvent.preventDefault();
-      const nextX = Math.max(0, startNodeX + point.clientX - startClientX);
-      const nextY = Math.max(0, startNodeY + point.clientY - startClientY);
-      if (Math.abs(nextX - node.x) < 0.5 && Math.abs(nextY - node.y) < 0.5) {
-        return;
-      }
-      moved = true;
-      node.x = nextX;
-      node.y = nextY;
-      updateGraphNodeElement(node);
-      refreshRenderedGraph(graph);
-    };
-
-    const stopDrag = (stopEvent) => {
-      eventNames.move.forEach((name) => window.removeEventListener(name, handleMove, true));
-      eventNames.end.forEach((name) => window.removeEventListener(name, stopDrag, true));
-      if (event.type === "pointerdown") {
-        try {
-          card.releasePointerCapture?.(stopEvent.pointerId);
-        } catch (_error) {
-          // Capture may already have been released by the browser.
-        }
-      }
-      card.classList.remove("dragging");
-      activeGraphDrag = null;
-
-      if (moved) {
-        recipeNodePositions.set(node.id, {
-          x: roundGraphCoordinate(node.x),
-          y: roundGraphCoordinate(node.y),
-        });
-        savePlannerState();
-      }
-    };
-
-    eventNames.move.forEach((name) => window.addEventListener(name, handleMove, { capture: true, passive: false }));
-    eventNames.end.forEach((name) => window.addEventListener(name, stopDrag, true));
-  }
-
-  function graphDragEventNames(startType) {
-    if (startType === "touchstart") {
-      return {
-        move: ["touchmove"],
-        end: ["touchend", "touchcancel"],
-      };
-    }
-    if (startType === "mousedown") {
-      return {
-        move: ["mousemove"],
-        end: ["mouseup"],
-      };
-    }
-    return {
-      move: ["pointermove", "mousemove", "touchmove"],
-      end: ["pointerup", "pointercancel", "mouseup", "touchend", "touchcancel"],
-    };
-  }
-
-  function graphDragPoint(event) {
-    if (event.touches?.length) {
-      return {
-        clientX: event.touches[0].clientX,
-        clientY: event.touches[0].clientY,
-      };
-    }
-    if (event.changedTouches?.length) {
-      return {
-        clientX: event.changedTouches[0].clientX,
-        clientY: event.changedTouches[0].clientY,
-      };
-    }
-    if (typeof event.clientX === "number" && typeof event.clientY === "number") {
-      return {
-        clientX: event.clientX,
-        clientY: event.clientY,
-      };
-    }
-    return null;
-  }
-
-  function updateGraphNodeElement(node) {
-    if (!node.element) {
-      return;
-    }
-    node.element.style.left = `${node.x}px`;
-    node.element.style.top = `${node.y}px`;
-  }
-
-  function refreshRenderedGraph(graph) {
-    refreshEdgeFeedback(graph.edges, graph.nodeById);
-    graph.busRoutes = routeEdges(graph.edges, graph.nodeById, { columnGap: graph.columnGap });
-    renderGraphBusRoutes(graph);
-    resizeGraphCanvas(graph);
-    graph.edges.forEach((edge) => {
-      edge.pathElement?.setAttribute("d", edgePath(edge));
-      if (edge.labelElement) {
-        edge.labelElement.style.left = `${edge.labelX}px`;
-        edge.labelElement.style.top = `${edge.labelY}px`;
-      }
-    });
-    applyGraphSelection(graph, graph.selectedNodeId || "");
   }
 
   function resizeGraphCanvas(graph) {
@@ -4659,93 +4505,11 @@
     return Number.isFinite(value) && value > 1e-5;
   }
 
-  function renderMergedTable(totals) {
-    if (!totals.length) {
-      tableView.replaceChildren(makeEmptyMessage(t("results.noDownstream")));
-      return;
-    }
-
-    const wrap = document.createElement("div");
-    wrap.className = "merged-table-wrap";
-
-    const table = document.createElement("table");
-    table.className = "merged-table";
-    const thead = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    ["table.item", "table.required", "table.unit", "table.type", "table.recipes"].map(t).forEach((label) => {
-      const th = document.createElement("th");
-      th.textContent = label;
-      headRow.appendChild(th);
-    });
-    thead.appendChild(headRow);
-
-    const tbody = document.createElement("tbody");
-    totals.forEach((row) => {
-      const tr = document.createElement("tr");
-      appendCell(tr, row.item.name);
-      appendCell(tr, formatNumber(row.rate), "number-cell");
-      appendCell(tr, row.item.unit);
-      appendCell(tr, row.raw ? materialCategoryText(row.item, t("category.RawMaterial")) : t("kind.intermediate"));
-      appendRecipeUsageCell(tr, row);
-      tbody.appendChild(tr);
-    });
-
-    table.append(thead, tbody);
-    wrap.appendChild(table);
-    tableView.replaceChildren(wrap);
-  }
-
-  function appendRecipeUsageCell(tr, row) {
-    const cell = document.createElement("td");
-    const switchRecipe = row.raw ? rawRecipeSwitch(row) : null;
-    if (canSwitchRecipe(switchRecipe)) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "table-switch-recipe-button";
-      button.textContent = t("results.recipes");
-      button.setAttribute("aria-label", `Show recipes for ${switchRecipe.primaryOutput?.name || row.item?.name || ""}`);
-      button.addEventListener("click", () => openRecipeFilterDialog({
-        materialClass: switchRecipe.primaryOutput?.className || row.item?.className || "",
-      }));
-      cell.appendChild(button);
-    }
-
-    const recipeNames = Array.isArray(row.recipes) ? row.recipes : [];
-    const recipeIds = Array.isArray(row.recipeIds) ? row.recipeIds : [];
-    recipeNames.forEach((recipeName, index) => {
-      if (index > 0) {
-        cell.appendChild(document.createTextNode(", "));
-      }
-      const text = document.createElement("span");
-      text.textContent = recipeName;
-      cell.appendChild(text);
-      const recipeId = String(recipeIds[index] || "").trim();
-      if (recipeId && !recipeId.startsWith(DIRECT_RAW_RECIPE_ID) && !isDefaultRecipeId(recipeId)) {
-        const tag = document.createElement("span");
-        tag.className = "recipe-usage-tag alternate-recipe-tag";
-        tag.textContent = "ALT";
-        tag.title = t("kind.alternateRecipe");
-        tag.setAttribute("aria-label", t("kind.alternateRecipe"));
-        cell.appendChild(tag);
-      }
-    });
-    tr.appendChild(cell);
-  }
-
   function summaryText(summary) {
     return t("summary.loaded", {
       recipes: formatInteger(summary.recipeCount), items: formatInteger(summary.itemCount),
       raw: formatInteger(summary.rawMaterialCount),
     });
-  }
-
-  function appendCell(row, text, className = "") {
-    const cell = document.createElement("td");
-    if (className) {
-      cell.className = className;
-    }
-    cell.textContent = text;
-    row.appendChild(cell);
   }
 
   function makeEmptyMessage(text) {
@@ -4756,23 +4520,9 @@
   }
 
   function selectTab(tabName) {
-    if (tabName !== "tree") exitCompactFocusView();
-    if (tabName !== "tree" && resultFocusMode) {
-      closeResultFocusMode();
-    }
-    activeTab = tabName;
-    const showTree = tabName === "tree";
-    treeView.classList.toggle("hidden", !showTree);
-    tableView.classList.toggle("hidden", showTree);
-    tabButtons.forEach((button) => {
-      const selected = button.dataset.tab === tabName;
-      button.classList.toggle("active", selected);
-      button.setAttribute("aria-selected", String(selected));
-    });
-    updateFocusControls();
-    if (showTree) {
-      fitCurrentGraphViewportHeight();
-    }
+    if (tabName !== "tree") return;
+    exitCompactFocusView();
+    fitCurrentGraphViewportHeight();
   }
 
   function setResultFocusMode(mode) {
@@ -4784,7 +4534,7 @@
 
   function updateFocusControls() {
     if (!resultFocusControls) return;
-    resultFocusControls.hidden = activeTab !== "tree";
+    resultFocusControls.hidden = false;
     if (pageFocusButton) {
       pageFocusButton.hidden = resultFocusMode === "page";
       const key = resultFocusMode === "browser" ? "focus.switchToPage" : "focus.enterPage";
@@ -4915,8 +4665,5 @@
     return i18n?.formatInteger(value || 0) || Number(value || 0).toLocaleString();
   }
 
-  function roundGraphCoordinate(value) {
-    const number = Number(value);
-    return Number.isFinite(number) ? Math.round(number) : 0;
-  }
+
 })();

@@ -11,7 +11,7 @@
     "target_added", "target_removed", "plan_saved", "plan_restored",
     "calculation_started", "calculation_succeeded", "calculation_failed", "recipe_expansion_required",
     "recipe_filter_opened", "recipe_selection_changed", "recipe_defaults_restored",
-    "result_view_changed", "layout_reset", "language_changed",
+    "language_changed",
   ]);
   const DIMENSION_NAMES = new Set(["context", "itemClass", "category", "view", "outcome", "reason"]);
   const METRIC_NAMES = new Set(["durationMs", "targetCount", "recipeCount", "enabledRecipeCount", "resultRowCount"]);
@@ -130,16 +130,14 @@
 
   function installDelegatedEvents() {
     const clickEvents = new Map([
-      ["addTargetButton", "target_added"], ["savePlanButton", "plan_saved"],
-      ["resetLayoutButton", "layout_reset"],
+      ["addTargetButton", "target_added"],
     ]);
     document.addEventListener("click", (event) => {
       const element = event.target instanceof Element ? event.target.closest("button,[data-plan-index]") : null;
       if (!element) return;
       const eventName = clickEvents.get(element.id);
       if (eventName) track(eventName);
-      if (element.matches(".tab-button[data-tab]")) track("result_view_changed", { view: element.dataset.tab });
-      if (element.matches("[data-plan-index]")) track("plan_restored", { context: element.closest("#savedPlanSelect") ? "saved" : "history" });
+      if (element.matches(".plan-picker-option-select")) track("plan_restored", { context: "saved" });
     });
     document.addEventListener("change", (event) => {
       const element = event.target;

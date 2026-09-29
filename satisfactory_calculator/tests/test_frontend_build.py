@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 import json
 import tempfile
+import re
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import build_frontend
@@ -49,7 +50,7 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
         self.assertNotIn("diagnosticsDialog", combined)
 
     def test_privacy_notice_describes_anonymous_analytics(self):
-        privacy = (build_frontend.SOURCE_DIR / "privacy.html").read_text(encoding="utf-8")
+        privacy = "\n".join((build_frontend.SOURCE_DIR / name).read_text(encoding="utf-8") for name in ("privacy.html", "privacy_i18n.js"))
         self.assertIn("每天更换", privacy)
         self.assertIn("does not contain factory plan contents", privacy)
         self.assertIn("?analytics_test=1", privacy)
@@ -67,6 +68,56 @@ class FrontendMonitoringBuildTests(unittest.TestCase):
             self.assertEqual(len(assets), 13)
             self.assertTrue(all(set(value) == {"ui", "game"} for value in assets.values()))
             self.assertTrue(all("i18n/" in value["game"] for value in assets.values()))
+
+    def test_privacy_translation_script_is_content_hashed_into_the_build(self):
+        config = {
+            "apiBaseUrl": "", "sentryDsn": "", "sentryEnvironment": "staging", "sentryRelease": "a" * 40,
+            "adsenseClient": "", "adsenseEnabled": False, "analyticsEndpoint": "", "localizationAssets": {},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assets = build_frontend.write_hashed_assets(Path(temp_dir), config)
+            self.assertIn("privacy_i18n.js", assets)
+            self.assertTrue((Path(temp_dir) / assets["privacy_i18n.js"]).is_file())
+            source = (build_frontend.SOURCE_DIR / "privacy.html").read_text(encoding="utf-8")
+            rendered = build_frontend.replace_asset_references(source, assets)
+            self.assertIn(assets["privacy_i18n.js"], rendered)
+
+    def test_recipe_filter_button_has_a_translation_in_every_supported_locale(self):
+        locale_manifest = json.loads((build_frontend.SOURCE_DIR / "i18n" / "locales.json").read_text(encoding="utf-8"))
+        english = json.loads((build_frontend.SOURCE_DIR / "i18n" / "ui.en-US.json").read_text(encoding="utf-8"))
+        self.assertEqual(english["recipes.short"], "Recipes")
+        for locale in locale_manifest["locales"]:
+            with self.subTest(locale=locale):
+                payload = json.loads((build_frontend.SOURCE_DIR / "i18n" / f"ui.{locale}.json").read_text(encoding="utf-8"))
+                self.assertTrue(payload.get("recipes.short"))
+                if locale != "en-US":
+                    self.assertNotEqual(payload["recipes.short"], english["recipes.short"])
+
+    def test_all_live_ui_keys_are_translated_and_keep_their_placeholders(self):
+        i18n_dir = build_frontend.SOURCE_DIR / "i18n"
+        locale_manifest = json.loads((i18n_dir / "locales.json").read_text(encoding="utf-8"))
+        english = json.loads((i18n_dir / "ui.en-US.json").read_text(encoding="utf-8"))
+        planner_js = (build_frontend.SOURCE_DIR / "production_planner.js").read_text(encoding="utf-8")
+        picker_js = (build_frontend.SOURCE_DIR / "material_picker.js").read_text(encoding="utf-8")
+        planner_html = (build_frontend.SOURCE_DIR / "production_planner.html").read_text(encoding="utf-8")
+        required = set(re.findall(r'\bt\("([^"]+)"', planner_js))
+        required.update(re.findall(r'\bt\("([^"]+)"', picker_js))
+        required.add("app.description")  # Also localized into the document metadata.
+        required.discard("picker.count")  # The i18n helper resolves this key through .one/.other plural entries.
+        required.update(re.findall(r'data-i18n(?:-[\w-]+)?="([^"]+)"', planner_html))
+        # These keys are selected dynamically (plural forms, loading status, and focus-view labels).
+        required.update({
+            "status.loaded", "picker.count.one", "picker.count.other", "focus.switchToPage",
+            "results.compactUpstream", "results.compactCurrent", "results.compactDownstream",
+        })
+        for locale in locale_manifest["locales"]:
+            payload = json.loads((i18n_dir / f"ui.{locale}.json").read_text(encoding="utf-8"))
+            with self.subTest(locale=locale):
+                self.assertFalse(required - payload.keys(), f"Missing UI translations: {sorted(required - payload.keys())}")
+                for key in required:
+                    english_placeholders = set(re.findall(r"\{(\w+)\}", str(english[key])))
+                    localized_placeholders = set(re.findall(r"\{(\w+)\}", str(payload[key])))
+                    self.assertEqual(localized_placeholders, english_placeholders, f"Placeholder mismatch for {locale}:{key}")
 
     def test_release_manifest_lists_the_exact_localization_assets(self):
         config={"sentryRelease":"a"*40,"sentryEnvironment":"staging","releaseVersion":"v2026.09.21.1.1",
@@ -114,6 +165,9 @@ class ReleaseFrontendTests(unittest.TestCase):
         html=build_frontend.render_html(build_frontend.SOURCE_DIR/"production_planner.html",config,{})
         self.assertIn("Release test environment",html)
         self.assertIn("Version v2026.09.14.42.1",html)
+        self.assertIn('<header class="app-header">\n    <div>\n      <h1',html)
+        self.assertIn('id="releaseLabel" class="release-label">Release test environment · Version v2026.09.14.42.1</p>',html)
+        self.assertNotIn('<p id="releaseLabel">',html)
         self.assertIn('name="robots" content="noindex, nofollow"',html)
         headers=build_frontend.render_headers(config)
         self.assertIn("X-Robots-Tag: noindex",headers)

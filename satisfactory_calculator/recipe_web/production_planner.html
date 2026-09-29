@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Plan Satisfactory production targets, recipes, raw inputs, and factory flow with an interactive production graph.">
   <title>Satisfactory Production Planner</title>
-  <link rel="stylesheet" href="production_planner.css?v=planner-compact-focus-20260929-2">
+  <link rel="stylesheet" href="production_planner.css?v=planner-save-dialog-20260929-1">
   <script defer src="planner_config.js?v=cloud-deploy-20260624-1"></script>
   <script defer src="planner_analytics.js"></script>
-  <script defer src="planner_i18n.js?v=planner-compact-focus-20260929-2"></script>
+  <script defer src="planner_i18n.js?v=planner-save-dialog-20260929-1"></script>
   <script defer src="planner_diagnostics.js"></script>
   <script defer src="material_picker.js"></script>
-  <script defer src="production_planner.js?v=planner-compact-focus-20260929-2"></script>
+  <script defer src="production_planner.js?v=planner-save-dialog-20260929-1"></script>
 </head>
 <body class="is-loading">
   <div id="initialLoading" class="initial-loading" role="status" aria-live="polite" aria-atomic="true" aria-busy="true">
@@ -35,6 +35,7 @@
   <header class="app-header">
     <div>
       <h1 data-i18n="app.title">Satisfactory Production Planner</h1>
+      <p id="releaseLabel" class="release-label">Version development</p>
       <p id="monitoringTestStatus" role="status" hidden></p>
     </div>
     <label class="language-field" for="languageSelect">
@@ -55,17 +56,11 @@
         <h2 id="targetHeading" data-i18n="targets.title">Production Targets</h2>
       </div>
 
-      <div class="plan-library" aria-label="Saved and recent target plans">
+      <div class="plan-library" aria-label="Saved target plans">
         <div class="plan-select-field">
           <div id="savedPlanSelect" class="plan-picker">
             <button class="plan-picker-button" type="button" disabled data-i18n="targets.noSaved">No saved plans</button>
-            <div class="plan-picker-menu" role="listbox" hidden></div>
-          </div>
-        </div>
-        <div class="plan-select-field">
-          <div id="historyPlanSelect" class="plan-picker">
-            <button class="plan-picker-button" type="button" disabled data-i18n="targets.noHistory">No recent history</button>
-            <div class="plan-picker-menu" role="listbox" hidden></div>
+            <div class="plan-picker-menu" hidden></div>
           </div>
         </div>
       </div>
@@ -94,11 +89,6 @@
         <div class="result-actions">
           <button id="findRecipeButton" class="secondary-button compact-button" type="button" data-i18n="results.findRecipe">Find Recipe</button>
           <button id="locateChangedRecipesButton" class="secondary-button compact-button recipe-change-locate" type="button" hidden data-i18n="results.locateChanged">Locate Changes</button>
-          <button id="resetLayoutButton" class="secondary-button compact-button" type="button" data-i18n="results.resetLayout">Reset Layout</button>
-          <div class="tabs" role="tablist" aria-label="Result views" data-i18n-aria-label="results.views">
-            <button class="tab-button active" type="button" data-tab="tree" role="tab" aria-selected="true" data-i18n="results.planView">Plan View</button>
-            <button class="tab-button" type="button" data-tab="table" role="tab" aria-selected="false" data-i18n="results.tableView">Merged Table</button>
-          </div>
           <div id="resultFocusControls" class="result-focus-controls">
             <button id="pageFocusButton" class="secondary-button focus-mode-button" type="button" title="Expand result view" aria-label="Expand result view" data-i18n-title="focus.enterPage" data-i18n-aria-label="focus.enterPage">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="4" width="17" height="16" rx="1.5"></rect><path d="M9 4v16M14 9l-2 3 2 3"></path></svg>
@@ -114,9 +104,23 @@
       </div>
 
       <div id="treeView" class="view-panel"></div>
-      <div id="tableView" class="view-panel hidden"></div>
     </section>
   </main>
+
+  <dialog id="savePlanDialog" class="save-plan-dialog" aria-labelledby="savePlanDialogTitle">
+    <form id="savePlanForm">
+      <h2 id="savePlanDialogTitle" data-i18n="targets.nameDialogTitle">Save production plan</h2>
+      <label class="save-plan-name-field" for="savePlanNameInput">
+        <span data-i18n="targets.nameLabel">Plan name</span>
+        <input id="savePlanNameInput" type="text" maxlength="80" autocomplete="off" data-i18n-placeholder="targets.namePlaceholder" placeholder="Optional name">
+      </label>
+      <p class="save-plan-name-hint" data-i18n="targets.nameHint">Leave blank to show only target material icons.</p>
+      <div class="save-plan-dialog-actions">
+        <button id="cancelSavePlanButton" class="secondary-button" type="button" data-i18n="targets.cancel">Cancel</button>
+        <button class="primary-button" type="submit" data-i18n="targets.save">Save</button>
+      </div>
+    </form>
+  </dialog>
 
   <footer class="app-footer">
     <a href="privacy.html" data-i18n="privacy.link">Privacy</a>
